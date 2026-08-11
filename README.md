@@ -117,25 +117,71 @@ sudo mv snap /usr/local/bin/snap
 
 ### VS Code Extension Installation
 
-Download `snap-checkpoints-1.1.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
+> **Prerequisite:** Install the `snap` CLI first (see above). The extension calls the CLI under the hood.
 
-**Method 1: Command Line**
+**Step 1: Download the extension**
 
+Download `snap-checkpoints-1.1.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases/tag/v1.0.0) page.
+
+**Step 2: Install in VS Code**
+
+Option A — Terminal:
 ```bash
 code --install-extension snap-checkpoints-1.1.0.vsix
 ```
 
-**Method 2: VS Code UI**
-
+Option B — VS Code UI:
 1. Open VS Code
-2. Go to Extensions panel (Ctrl+Shift+X / Cmd+Shift+X)
-3. Click the `...` menu (top-right of Extensions panel)
+2. Press `Cmd+Shift+X` (Mac) or `Ctrl+Shift+X` (Windows/Linux) to open Extensions
+3. Click the `...` menu at the top-right of the Extensions panel
 4. Select **"Install from VSIX..."**
-5. Browse to the downloaded `.vsix` file
-6. Click Install
-7. Reload VS Code
+5. Browse to the downloaded `.vsix` file and select it
+6. Click **Install**
+7. Reload VS Code when prompted
 
-> **Important:** The VS Code extension requires the `snap` CLI to be installed and available in your system PATH. Install the CLI first.
+**Step 3: Verify**
+
+After reload, you should see a **bookmark icon** (📑) in the left activity bar. That's the Snap panel.
+
+**Step 4: Initialize your project**
+
+Open any project folder in VS Code, then either:
+- Run `snap init` in the terminal, OR
+- Open Command Palette (`Cmd+Shift+P`) → type "Snap: Initialize"
+
+The Snap panel will now show your checkpoints.
+
+### Extension: Getting Started
+
+Once installed, here's the typical workflow inside VS Code:
+
+```
+1. Click the bookmark icon in the left sidebar
+   → Opens the Snap panel
+
+2. Click the save icon (💾) at the top of Timeline panel
+   → Enter a message: "before refactoring auth"
+   → Optionally add a description
+   → Checkpoint saved!
+
+3. Make changes (or let an agent make changes)...
+
+4. Check the "Changes Since Last Snapshot" panel
+   → Shows which files changed in real-time
+
+5. Expand any checkpoint to see its files
+   → Click a file name to VIEW its content at that point
+   → Click the diff icon (⇔) to see side-by-side DIFF vs current
+
+6. Need to go back?
+   → Right-click a checkpoint → "Restore"
+   → Confirms first, auto-saves current state, then restores
+   
+7. Want to clean up?
+   → Click the trash icon (🗑) on any checkpoint to delete it
+```
+
+The diff view uses VS Code's native diff editor — same word-level highlighting as the built-in Git extension. Changed characters within a line are highlighted in a darker shade so you can see exactly what changed.
 
 ---
 
