@@ -68,29 +68,35 @@ Git is great for publishing code. But between commits, your code is unprotected.
 
 ### CLI Installation
 
-Download the binary for your platform from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
-
-**macOS (Apple Silicon — M1/M2/M3/M4):**
+**macOS (Recommended — Homebrew):**
 
 ```bash
-# Download
-curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-darwin-arm64 -o snap
-
-# Make executable
-chmod +x snap
-
-# Move to PATH
-sudo mv snap /usr/local/bin/snap
+brew tap NiHaLOO7/snap
+brew trust --formula nihaloo7/snap/devsnap
+brew install NiHaLOO7/snap/devsnap
 
 # Verify
 snap version
 ```
 
-**macOS (Intel):**
+No security warnings, no quarantine issues. Works on both Apple Silicon and Intel.
+
+**macOS (Manual — from .pkg installer):**
+
+Download from [Releases](https://github.com/NiHaLOO7/snap/releases):
+- Apple Silicon (M1/M2/M3/M4) → `Snap-1.0.0-mac-arm64.pkg`
+- Intel Mac → `Snap-1.0.0-mac-intel.pkg`
+
+Double-click the `.pkg` file and follow the installer.
+
+> If macOS blocks it: System Settings → Privacy & Security → "Open Anyway"
+
+**macOS (Manual — binary):**
 
 ```bash
-curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-darwin-amd64 -o snap
+curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-darwin-arm64 -o snap
 chmod +x snap
+xattr -d com.apple.quarantine snap
 sudo mv snap /usr/local/bin/snap
 ```
 
