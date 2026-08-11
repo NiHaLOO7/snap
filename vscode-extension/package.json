@@ -1,0 +1,128 @@
+{
+  "name": "snap-checkpoints",
+  "displayName": "Snap - Local Checkpoints",
+  "description": "Local development checkpoint tool — save, diff, and restore your code instantly without Git commits",
+  "version": "1.1.0",
+  "publisher": "nihalkumar",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other",
+    "SCM Providers"
+  ],
+  "keywords": [
+    "checkpoint",
+    "backup",
+    "snapshot",
+    "save",
+    "restore",
+    "diff",
+    "local"
+  ],
+  "activationEvents": [
+    "workspaceContains:.snap"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "snap.init",
+        "title": "Snap: Initialize",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "snap.save",
+        "title": "Snap: Save Checkpoint",
+        "icon": "$(save)"
+      },
+      {
+        "command": "snap.restore",
+        "title": "Snap: Restore Checkpoint",
+        "icon": "$(history)"
+      },
+      {
+        "command": "snap.showFile",
+        "title": "Snap: Show File at Checkpoint",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "snap.diffFile",
+        "title": "Snap: Diff File with Current",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "snap.delete",
+        "title": "Snap: Delete Checkpoint",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "snap.refresh",
+        "title": "Snap: Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "snap-explorer",
+          "title": "Snap Checkpoints",
+          "icon": "$(bookmark)"
+        }
+      ]
+    },
+    "views": {
+      "snap-explorer": [
+        {
+          "id": "snapTimeline",
+          "name": "Timeline"
+        },
+        {
+          "id": "snapChanges",
+          "name": "Changes Since Last Snapshot"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "snap.save",
+          "when": "view == snapTimeline",
+          "group": "navigation"
+        },
+        {
+          "command": "snap.refresh",
+          "when": "view == snapTimeline",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "snap.restore",
+          "when": "viewItem == snapshot",
+          "group": "1_actions"
+        },
+        {
+          "command": "snap.delete",
+          "when": "viewItem == snapshot",
+          "group": "inline"
+        },
+        {
+          "command": "snap.diffFile",
+          "when": "viewItem == snapshotFile",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.3.0"
+  }
+}

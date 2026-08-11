@@ -1,0 +1,25 @@
+# Binaries
+snap
+*.exe
+*.dll
+*.so
+*.dylib
+dist/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Node
+vscode-extension/node_modules/
+vscode-extension/out/
+
+# Test
+demo-project/
+demo-project2/
