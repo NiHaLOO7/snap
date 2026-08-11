@@ -31,6 +31,24 @@ Built for the AI-assisted development workflow where you make experimental chang
 └─────────────────────────────────────────────────┘
 ```
 
+---
+
+## Table of Contents
+
+- [Why Snap?](#why-snap)
+- [Installation](#installation)
+  - [CLI Installation](#cli-installation)
+  - [VS Code Extension](#vs-code-extension-installation)
+- [Quick Start](#quick-start)
+- [CLI Commands](#cli-commands)
+- [VS Code Extension](#vs-code-extension)
+- [Storage Design](#storage-design)
+- [.snapignore](#snapignore)
+- [Build from Source](#build-from-source)
+- [Architecture](#architecture)
+
+---
+
 ## Why Snap?
 
 Git is great for publishing code. But between commits, your code is unprotected.
@@ -42,44 +60,112 @@ Git is great for publishing code. But between commits, your code is unprotected.
 | Experimenting and want to compare states | `snap diff 3 7` — any two points |
 | Don't want to pollute Git history | Snap is completely separate from Git |
 | Lost track of what changed | `snap status` — instant overview |
+| Don't know which checkpoint to restore | `snap show 3 src/main.go` — view file at any point |
+
+---
 
 ## Installation
 
+### CLI Installation
+
+Download the binary for your platform from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
+
+**macOS (Apple Silicon — M1/M2/M3/M4):**
+
 ```bash
-# Build from source
-cd snap
-go build -o snap ./cmd/snap/
+# Download
+curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-darwin-arm64 -o snap
+
+# Make executable
+chmod +x snap
 
 # Move to PATH
-mv snap /usr/local/bin/
+sudo mv snap /usr/local/bin/snap
+
+# Verify
+snap version
 ```
+
+**macOS (Intel):**
+
+```bash
+curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-darwin-amd64 -o snap
+chmod +x snap
+sudo mv snap /usr/local/bin/snap
+```
+
+**Linux:**
+
+```bash
+curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-linux-amd64 -o snap
+chmod +x snap
+sudo mv snap /usr/local/bin/snap
+```
+
+**Windows:**
+
+1. Download `snap-windows-amd64.exe` from the release page
+2. Rename to `snap.exe`
+3. Move to a folder in your PATH (e.g., `C:\Users\YourName\bin\`)
+4. Add that folder to your system PATH if not already there
+
+### VS Code Extension Installation
+
+Download `snap-checkpoints-1.1.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
+
+**Method 1: Command Line**
+
+```bash
+code --install-extension snap-checkpoints-1.1.0.vsix
+```
+
+**Method 2: VS Code UI**
+
+1. Open VS Code
+2. Go to Extensions panel (Ctrl+Shift+X / Cmd+Shift+X)
+3. Click the `...` menu (top-right of Extensions panel)
+4. Select **"Install from VSIX..."**
+5. Browse to the downloaded `.vsix` file
+6. Click Install
+7. Reload VS Code
+
+> **Important:** The VS Code extension requires the `snap` CLI to be installed and available in your system PATH. Install the CLI first.
+
+---
 
 ## Quick Start
 
 ```bash
-# Initialize in your project
+# 1. Go to your project
 cd your-project
+
+# 2. Initialize snap
 snap init
 
-# Save your first checkpoint
+# 3. Save your first checkpoint
 snap save "initial working state"
 
-# Make changes, let agents run, experiment...
-# Then save again
-snap save "after auth refactor"
+# 4. Work, make changes, let agents run...
 
-# See what changed
+# 5. Save another checkpoint with optional description
+snap save "auth complete" -d "JWT working, refresh token pending"
+
+# 6. Check what changed since last save
 snap status
 
-# Compare any two checkpoints
-snap diff 1 2
+# 7. Something broke? See the diff
+snap diff 1 2 -f
 
-# Something broke? Restore instantly
+# 8. Restore to any checkpoint (current state auto-saved)
 snap restore 1
-# (current state is auto-saved, you never lose work)
+
+# 9. View a file at any checkpoint
+snap show 2 src/main.go
 ```
 
-## Commands
+---
+
+## CLI Commands
 
 ### `snap init`
 
@@ -93,9 +179,11 @@ Ready to save snapshots. Run:
   snap save "initial state"
 ```
 
-### `snap save [message]`
+---
 
-Take a snapshot of the entire project state.
+### `snap save [message] [-d "description"]`
+
+Take a snapshot of the entire project state. Description is optional.
 
 ```
 $ snap save "before oauth implementation"
@@ -103,6 +191,13 @@ Saved snapshot #4
   Message:  before oauth implementation
   Files:    47
   Time:     12ms
+
+$ snap save "auth done" -d "JWT tokens working, refresh token still pending"
+Saved snapshot #5
+  Message:  auth done
+  Desc:     JWT tokens working, refresh token still pending
+  Files:    48
+  Time:     8ms
 ```
 
 **How it works internally:**
@@ -110,26 +205,70 @@ Saved snapshot #4
 - Hashes each file with SHA-256
 - Only stores files that changed (content-addressed deduplication)
 - Compresses with zlib
-- Saves metadata (timestamp, message, file tree)
+- Saves metadata (timestamp, message, description, file tree)
+
+---
 
 ### `snap list` / `snap ls`
 
-Show all checkpoints in timeline order.
+Show all checkpoints organized in two categories.
 
 ```
 $ snap list
-Snapshots (5 total):
+
+📌 Checkpoints (3)
 
   ● #1     Aug 11 10:02  initial state  (42 files)
   │
-  ● #2     Aug 11 10:34  before auth refactor  (42 files)
-  │
-  ● #3     Aug 11 11:15  after claude changes  (47 files)
-  │
-  ● #4     Aug 11 11:20  auto-save before restore to #2  (47 files) [auto]
+  ● #3     Aug 11 11:15  after auth refactor  (47 files)
   │
   ◉ #5     Aug 11 11:45  working oauth  (48 files)
+  │         JWT tokens working, refresh token still pending
+
+🔄 Auto-saves (2)
+
+  ○ #4     Aug 11 11:20  auto-save before restore to #2 "before auth"  (47 files)
+  │
+  ◎ #6     Aug 11 12:01  auto-save before restore to #1 "initial state"  (48 files)
+
+  Total: 3 checkpoints, 2 auto-saves
 ```
+
+User checkpoints and auto-saves are separated so you can easily identify your intentional save points.
+
+---
+
+### `snap show <id> [file]`
+
+View what's inside a checkpoint — list files or view specific file content.
+
+```
+# List all files in a snapshot
+$ snap show 3
+Snapshot #3 "after auth refactor" (Aug 11 11:15)
+Files (47):
+
+  README.md
+  src/auth/jwt.go
+  src/auth/middleware.go
+  src/main.go
+  ...
+
+# View a specific file's content at that snapshot
+$ snap show 3 src/auth/jwt.go
+── src/auth/jwt.go (snapshot #3) ──
+
+package auth
+
+import (
+    "crypto/sha256"
+    ...
+)
+```
+
+This helps you decide which checkpoint to restore — peek at the code before jumping back.
+
+---
 
 ### `snap restore <id>`
 
@@ -146,49 +285,57 @@ Restored successfully. (42 files)
 Your previous state is saved as #6 if you need it back.
 ```
 
-**Safety guarantee:** Before restoring, your current state is automatically saved as a new checkpoint marked `[auto]`. You can always get it back.
+**Safety guarantee:** Before restoring, your current state is automatically saved. You can always get it back.
 
-### `snap diff <id> [id2]`
+---
 
-Compare any two states. If only one ID is given, compares against current working directory.
+### `snap diff`
+
+Compare any two states. Multiple modes available.
 
 ```
 # Snapshot vs current working directory
 $ snap diff 3
-Snapshot #3 "after claude changes"  →  Current working directory
+Snapshot #3 "after auth"  →  Current working directory
 
   + src/new_file.go  (added)
   ~ src/auth.go  (modified)
-  - src/deprecated.go  (deleted)
+  - src/old.go  (deleted)
 
   1 modified, 1 added, 1 deleted
 
-# Snapshot vs snapshot
+# Between two snapshots
 $ snap diff 1 5
-Snapshot #1 "initial state"  →  Snapshot #5 "working oauth"
 
-  + src/oauth.go  (added)
-  + src/token.go  (added)
-  ~ src/main.go  (modified)
-  ~ src/config.go  (modified)
-
-  2 modified, 2 added, 0 deleted
-
-# Full line-level diff
+# Full line-level diff (colored output)
 $ snap diff 1 5 -f
-Snapshot #1 "initial state"  →  Snapshot #5 "working oauth"
+Snapshot #1 "initial"  →  Snapshot #5 "oauth working"
 
-  + src/oauth.go  (added)
   ~ src/main.go  (modified)
-    @@ -1,4 +1,7 @@
-      package main
-    +
-    + import "github.com/you/oauth"
-    +
+    @@ -3,6 +3,8 @@
+      import "fmt"
+
       func main() {
-    +     oauth.Init()
-          // ...
+    -     fmt.Println("Hello")
+    +     fmt.Println("Hello World")
+    +     startAuth()
+      }
+
+# Diff a specific file only
+$ snap diff 1 2 src/main.go
+── src/main.go ──
+Snapshot #1 "initial"  →  Snapshot #2 "after changes"
+
+@@ -3,6 +3,6 @@
+  import "fmt"
+
+  func main() {
+-     fmt.Println("Hello")
++     fmt.Println("Hello World")
+  }
 ```
+
+---
 
 ### `snap status`
 
@@ -207,9 +354,93 @@ Last snapshot: #5 "working oauth" (Aug 11 11:45)
   1 modified, 1 added, 1 deleted
 ```
 
+---
+
+### `snap delete <id>` / `snap rm <id>`
+
+Delete a checkpoint you no longer need.
+
+```
+$ snap delete 4
+Deleted snapshot #4 "auto-save before restore to #2"
+```
+
+---
+
+## VS Code Extension
+
+The extension provides a visual interface for all snap operations directly in VS Code.
+
+### How it Works
+
+Once installed, a **bookmark icon** appears in the activity bar (left sidebar). Click it to open the Snap panel with two sections:
+
+**1. Timeline Panel**
+
+```
+SNAP CHECKPOINTS
+│
+├── 📌 Checkpoints
+│   ├── ◉ #5 — working oauth          Aug 11 11:45 • 48 files
+│   │   ├── src/main.go               ← click to view content
+│   │   ├── src/auth/jwt.go               click diff icon for comparison
+│   │   └── src/auth/middleware.go
+│   │
+│   ├── ● #3 — after auth refactor    Aug 11 11:15 • 47 files
+│   │   └── ...
+│   │
+│   └── ● #1 — initial state          Aug 11 10:02 • 42 files
+│       └── ...
+│
+└── 🔄 Auto-saves
+    ├── ◎ #6 — auto-save before restore to #1 "initial state"
+    └── ○ #4 — auto-save before restore to #2 "before auth"
+```
+
+**2. Changes Panel**
+
+Shows files changed since last snapshot (auto-refreshes as you edit):
+
+```
+CHANGES SINCE LAST SNAPSHOT
+  ~ src/auth.go         modified
+  + src/new_file.go     added
+  - src/removed.go      deleted
+```
+
+### Extension Features
+
+| Action | How |
+|--------|-----|
+| **Save checkpoint** | Click save icon (top of Timeline panel) → type message → optional description |
+| **View file at checkpoint** | Expand checkpoint → click any file |
+| **Diff file vs current** | Expand checkpoint → click diff icon on a file |
+| **Restore checkpoint** | Right-click checkpoint → Restore |
+| **Delete checkpoint** | Click trash icon on checkpoint |
+| **Refresh** | Click refresh icon (top of Timeline panel) |
+
+### Diff View
+
+When you click the diff icon on a file, VS Code opens its **native diff editor**:
+
+- Side-by-side comparison (snapshot version ↔ current version)
+- **Word-level highlighting** — exact characters that changed are highlighted (just like Git in VS Code)
+- Full syntax highlighting for both sides
+- Inline navigation between changes
+
+This gives you the same experience as VS Code's built-in Git diff.
+
+### Extension Requirements
+
+- `snap` CLI must be installed and available in system PATH
+- Project must have `.snap/` directory (run `snap init` first)
+- Extension auto-activates when it detects `.snap` folder in workspace
+
+---
+
 ## Storage Design
 
-Snap uses a **content-addressed object store** (the same approach as Git internally):
+Snap uses a **content-addressed object store** — the same fundamental approach as Git:
 
 ```
 .snap/
@@ -219,20 +450,30 @@ Snap uses a **content-addressed object store** (the same approach as Git interna
 │   ├── 7c/
 │   │   └── 2e91f0...
 │   └── ...
-├── snapshots/            # Snapshot metadata
+├── snapshots/            # Snapshot metadata (JSON)
 │   ├── 0001.json
 │   ├── 0002.json
 │   └── ...
 └── config.json
 ```
 
-**Key properties:**
-- **Deduplication**: If a file hasn't changed, it's not stored again. The snapshot just references the existing blob by hash.
-- **Compression**: All blobs are zlib-compressed.
-- **Integrity**: SHA-256 hashes guarantee data integrity.
-- **Speed**: Only changed files are processed on each save.
+**How deduplication works:**
 
-A project with 1000 files where only 5 changed? Only 5 new blobs stored.
+```
+Snapshot #1: { "src/main.go": "abc123", "src/utils.go": "def456" }
+Snapshot #2: { "src/main.go": "xyz789", "src/utils.go": "def456" }
+                                ↑ new blob              ↑ same hash — NOT stored again
+```
+
+If 200 files exist and only 5 changed since last save, only 5 new blobs are stored. The other 195 paths point to existing objects.
+
+**Key properties:**
+- **SHA-256 hashing** — content integrity guaranteed
+- **Zlib compression** — all blobs compressed on disk
+- **Deduplication** — unchanged files cost zero additional storage
+- **Independence** — every snapshot is self-contained, can be deleted without breaking others
+
+---
 
 ## .snapignore
 
@@ -251,7 +492,6 @@ build
 
 # IDE
 .idea
-.vscode
 
 # Secrets
 .env
@@ -265,121 +505,89 @@ build
 - `*.exe`, `*.dll`, `*.so`, `*.dylib`
 - `dist`, `build`, `.env`, `tmp`
 
-## VS Code Extension
+---
 
-Snap comes with a VS Code extension for visual checkpoint management.
+## Build from Source
 
-**Features:**
-- **Sidebar timeline**: See all snapshots in activity bar
-- **One-click save**: Save checkpoint with message prompt
-- **Visual diff**: Click any snapshot to see full diff
-- **Restore with confirmation**: Right-click → Restore (with safety warning)
-- **Live changes panel**: See what's changed since last snapshot (auto-refreshes)
+Requires Go 1.21+.
 
-**Install:**
+```bash
+# Clone
+git clone https://github.com/NiHaLOO7/snap.git
+cd snap
+
+# Build for your platform
+go build -o snap ./cmd/snap/
+sudo mv snap /usr/local/bin/
+
+# Or build all platforms
+make build-all
+# Binaries will be in dist/
+```
+
+**Build the VS Code extension:**
+
 ```bash
 cd vscode-extension
 npm install
-npm run compile
-# Then install the .vsix or run in development mode
+npx tsc -p ./
+npx @vscode/vsce package --allow-missing-repository
+# Produces snap-checkpoints-x.x.x.vsix
 ```
 
-The extension calls the `snap` CLI binary under the hood — install the CLI first.
-
-## Capabilities Summary
-
-| Feature | Description |
-|---------|-------------|
-| **Instant Save** | Full project snapshot in milliseconds |
-| **Content Dedup** | Only stores what actually changed (SHA-256 addressed) |
-| **Zlib Compression** | All blobs compressed, minimal disk usage |
-| **Safe Restore** | Auto-saves before every restore — zero data loss |
-| **Tree Diff** | Compare file trees between any two checkpoints |
-| **Line Diff** | Myers algorithm line-by-line diff (same as Git) |
-| **Status** | What changed since last snapshot |
-| **Ignore Patterns** | `.snapignore` file + smart defaults |
-| **VS Code UI** | Full sidebar integration, visual diff |
-| **Git Compatible** | Lives alongside Git, doesn't interfere |
-| **Offline** | 100% local, no network, no accounts |
-| **Fast** | Sub-second saves even for large projects |
-
-## Use Cases
-
-**1. AI Agent Safety Net**
-```bash
-snap save "before claude refactors"
-# Let agent run...
-# Something broke?
-snap restore 4
-```
-
-**2. Experimental Feature Development**
-```bash
-snap save "stable baseline"
-# Try approach A
-snap save "approach A"
-snap restore 1
-# Try approach B
-snap save "approach B"
-snap diff 2 3    # Compare approaches
-```
-
-**3. Mid-Feature Progress**
-```bash
-# Working on a feature, not ready to commit
-snap save "auth halfway done"
-# Continue working
-snap save "auth 80% done"
-# Keep going until ready for Git
-git add . && git commit -m "feat: add authentication"
-```
-
-**4. Before Risky Operations**
-```bash
-snap save "before database migration changes"
-# Make risky changes...
-# If it goes wrong:
-snap restore 7
-```
+---
 
 ## Architecture
 
 ```
-cmd/snap/main.go           # CLI entry point, command routing
-internal/
-├── store/store.go         # Content-addressed object store (SHA-256 + zlib)
-├── snapshot/snapshot.go   # Save/restore/list engine
-├── diff/diff.go           # Tree comparison + Myers line diff
-├── ignore/ignore.go       # .snapignore pattern matching
-└── config/                # Configuration (reserved)
-vscode-extension/          # VS Code sidebar + diff UI
+snap/
+├── cmd/snap/main.go              # CLI entry point, all commands
+├── internal/
+│   ├── store/store.go            # Content-addressed object store (SHA-256 + zlib)
+│   ├── snapshot/snapshot.go      # Save/restore/list engine
+│   ├── diff/diff.go              # Tree comparison + LCS line diff
+│   └── ignore/ignore.go          # .snapignore pattern matching
+├── vscode-extension/
+│   ├── src/extension.ts          # Extension activation, commands
+│   ├── src/snapProvider.ts       # Timeline tree view (categories + files)
+│   ├── src/changesProvider.ts    # Changed files panel
+│   └── src/snapCli.ts            # CLI wrapper for extension
+├── Makefile                      # Cross-platform build targets
+└── README.md
 ```
 
-## Tech Stack
+**Tech Stack:**
+- **CLI:** Go (zero external dependencies — stdlib only)
+- **Hashing:** SHA-256 (`crypto/sha256`)
+- **Compression:** zlib (`compress/zlib`)
+- **Diff:** LCS-based algorithm
+- **Extension:** TypeScript, VS Code API
+- **Storage:** File-based, content-addressed
 
-- **Language**: Go
-- **Hashing**: SHA-256 (crypto/sha256)
-- **Compression**: zlib (compress/zlib)
-- **Storage**: File-based, content-addressed
-- **Diff Algorithm**: Myers (same as Git)
-- **VS Code Extension**: TypeScript
-- **Dependencies**: Zero external Go dependencies (stdlib only)
+---
 
-## Project State
+## Roadmap
 
 - [x] Content-addressed object store
 - [x] Snapshot save with deduplication
 - [x] Snapshot restore with auto-save safety
-- [x] Timeline listing
+- [x] Categorized listing (Checkpoints vs Auto-saves)
+- [x] Optional descriptions on checkpoints
 - [x] Tree-level diff (file changes)
-- [x] Line-level diff (Myers algorithm)
+- [x] Line-level diff with color output
+- [x] File-specific diff mode
+- [x] File viewer at any checkpoint
+- [x] Checkpoint deletion
 - [x] Status (changes since last save)
 - [x] `.snapignore` support
-- [x] VS Code extension
-- [ ] Garbage collector (delete old snapshots, clean unreferenced blobs)
+- [x] VS Code extension with native diff
+- [x] Cross-platform binaries (macOS/Windows/Linux)
+- [ ] Garbage collector (time-based auto-save cleanup)
 - [ ] Named states / tags (⭐ "last known good")
 - [ ] Snapshot export to Git commit
 - [ ] Auto-save hooks (before/after agent runs)
+
+---
 
 ## License
 
