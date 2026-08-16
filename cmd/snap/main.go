@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -53,6 +54,10 @@ func main() {
 		cmdSaveFile()
 	case "restore-file":
 		cmdRestoreFile()
+	case "watch":
+		cmdWatch()
+	case "clean":
+		cmdClean()
 	case "record":
 		cmdRecord()
 	case "rewind":
@@ -95,8 +100,109 @@ func cmdInit() {
 	}
 
 	fmt.Printf("Initialized snap in %s/.snap/\n", root)
-	fmt.Println("\nReady to save snapshots. Run:")
-	fmt.Println("  snap save \"initial state\"")
+
+	// Auto-save initial state
+	snap, err := engine.Save("initial state", false)
+	if err == nil {
+		fmt.Printf("  Saved initial checkpoint #%d (%d files)\n", snap.ID, snap.FileCount)
+	}
+
+	// Create agent instruction files
+	writeAgentInstructions(root)
+
+	fmt.Println("\n  Agents will now auto-save before/after changes.")
+	fmt.Println("  Manual commands:")
+	fmt.Println("    snap save \"message\"     — explicit checkpoint")
+	fmt.Println("    snap list               — view all checkpoints")
+	fmt.Println("    snap restore <id>       — rollback")
+}
+
+func writeAgentInstructions(root string) {
+	snapRules := `# Snap — Local Checkpoint Rules
+
+This project uses snap for local checkpoints. Use snap efficiently:
+
+## Workflow (MANDATORY):
+1. Before ANY multi-file change: snap save "before: <what you're about to do>"
+2. After completing a logical unit of work: snap save "after: <what you did>"
+3. If something breaks: snap restore <id>
+
+## For continuous recording (large refactors, risky changes):
+- Start: snap record start
+- Stop when done: snap record stop
+- Rewind to exact moment: snap rewind "5 minutes ago"
+
+## Single file operations (prefer when touching 1-2 files):
+- snap save-file <file> "message" — checkpoint one file
+- snap restore-file <id> <file> — restore one file from any snapshot
+
+## Protect important checkpoints:
+- snap pin <id> — prevent auto-cleanup from deleting this snapshot
+
+## Critical file watching:
+- snap watch add <file> — mark file for auto-checkpoint on every change
+- snap watch remove <file> — stop watching
+- Use for: config files, migrations, env files, anything dangerous to lose
+
+## All commands:
+- snap save "msg" — full project checkpoint
+- snap save-file <file> "msg" — single file checkpoint
+- snap list — all checkpoints
+- snap diff <id> — what changed since snapshot
+- snap restore <id> — restore full project
+- snap restore-file <id> <file> — restore single file
+- snap record start/stop/status — continuous recording
+- snap rewind "<time>" — restore from timeline (e.g. "5 minutes ago", "14:30")
+- snap pin/unpin <id> — protect/unprotect snapshots
+- snap watch add/remove/list — critical file auto-checkpoints
+- snap clean — remove redundant snapshots and free space
+- snap delete <id> — delete a snapshot
+
+## Best practices:
+- Use recording for exploratory/risky work, stop when stable
+- Pin snapshots at known-good states before big changes
+- Watch config/migration files that are hard to recover
+- Prefer save-file over full save when only 1-2 files change
+- Run snap clean --auto after long sessions to free space
+`
+
+	// CLAUDE.md — append or create
+	claudeMdPath := filepath.Join(root, "CLAUDE.md")
+	if data, err := os.ReadFile(claudeMdPath); err == nil {
+		if !strings.Contains(string(data), "snap save") {
+			os.WriteFile(claudeMdPath, append(data, []byte("\n\n"+snapRules)...), 0644)
+			fmt.Println("  Updated CLAUDE.md with snap rules")
+		}
+	} else {
+		os.WriteFile(claudeMdPath, []byte(snapRules), 0644)
+		fmt.Println("  Created CLAUDE.md with snap rules")
+	}
+
+	// .cursorrules — append or create
+	cursorPath := filepath.Join(root, ".cursorrules")
+	if data, err := os.ReadFile(cursorPath); err == nil {
+		if !strings.Contains(string(data), "snap save") {
+			os.WriteFile(cursorPath, append(data, []byte("\n\n"+snapRules)...), 0644)
+			fmt.Println("  Updated .cursorrules with snap rules")
+		}
+	} else {
+		os.WriteFile(cursorPath, []byte(snapRules), 0644)
+		fmt.Println("  Created .cursorrules with snap rules")
+	}
+
+	// .github/copilot-instructions.md
+	copilotDir := filepath.Join(root, ".github")
+	copilotPath := filepath.Join(copilotDir, "copilot-instructions.md")
+	if data, err := os.ReadFile(copilotPath); err == nil {
+		if !strings.Contains(string(data), "snap save") {
+			os.WriteFile(copilotPath, append(data, []byte("\n\n"+snapRules)...), 0644)
+			fmt.Println("  Updated .github/copilot-instructions.md")
+		}
+	} else {
+		os.MkdirAll(copilotDir, 0755)
+		os.WriteFile(copilotPath, []byte(snapRules), 0644)
+		fmt.Println("  Created .github/copilot-instructions.md")
+	}
 }
 
 func cmdSave() {
@@ -482,6 +588,238 @@ func cmdDelete() {
 	_ = engine
 }
 
+func cmdClean() {
+	engine := requireInit()
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+
+	autoMode := len(os.Args) > 2 && (os.Args[2] == "--auto" || os.Args[2] == "-y")
+	dryRun := len(os.Args) > 2 && (os.Args[2] == "--dry-run" || os.Args[2] == "-n")
+
+	snapshots, err := engine.List()
+	if err != nil {
+		fatal("list snapshots: %v", err)
+	}
+
+	if len(snapshots) == 0 {
+		fmt.Println("Nothing to clean.")
+		return
+	}
+
+	// Categorize what can be removed
+	type removal struct {
+		snap   *snapshot.Snapshot
+		reason string
+	}
+
+	var toRemove []removal
+	var toKeep []*snapshot.Snapshot
+
+	// Track which trees we've seen (for duplicate detection)
+	seenTrees := make(map[string]int) // tree hash -> first snapshot ID with this tree
+
+	now := time.Now()
+	retention := 7 * 24 * time.Hour // 7 days default
+
+	for _, snap := range snapshots {
+		// Never remove pinned
+		if snap.Pinned {
+			toKeep = append(toKeep, snap)
+			continue
+		}
+
+		// Build a tree fingerprint for duplicate detection
+		treeKey := buildTreeKey(snap.Tree)
+
+		if firstID, exists := seenTrees[treeKey]; exists {
+			toRemove = append(toRemove, removal{snap, fmt.Sprintf("duplicate of #%d (identical state)", firstID)})
+			continue
+		}
+		seenTrees[treeKey] = snap.ID
+
+		// Old auto-saves (> retention period)
+		if snap.AutoSave && now.Sub(snap.Timestamp) > retention {
+			toRemove = append(toRemove, removal{snap, fmt.Sprintf("auto-save older than %d days", int(retention.Hours()/24))})
+			continue
+		}
+
+		// Superseded auto-saves: if there's a newer auto-save within 5 minutes, this one is redundant
+		if snap.AutoSave {
+			superseded := false
+			for _, other := range snapshots {
+				if other.ID > snap.ID && other.AutoSave && other.Timestamp.Sub(snap.Timestamp) < 5*time.Minute {
+					superseded = true
+					break
+				}
+			}
+			if superseded {
+				toRemove = append(toRemove, removal{snap, "superseded by newer auto-save within 5 min"})
+				continue
+			}
+		}
+
+		toKeep = append(toKeep, snap)
+	}
+
+	// Calculate sizes
+	snapshotsDir := filepath.Join(snapPath, "snapshots")
+	var removeSize int64
+	for _, r := range toRemove {
+		filename := fmt.Sprintf("%04d.json", r.snap.ID)
+		if info, err := os.Stat(filepath.Join(snapshotsDir, filename)); err == nil {
+			removeSize += info.Size()
+		}
+	}
+
+	// Count orphaned objects (objects not referenced by any kept snapshot)
+	referencedHashes := make(map[string]bool)
+	for _, snap := range toKeep {
+		for _, hash := range snap.Tree {
+			referencedHashes[hash] = true
+		}
+	}
+
+	var orphanCount int
+	var orphanSize int64
+	objectsDir := filepath.Join(snapPath, "objects")
+	filepath.Walk(objectsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Reconstruct hash from path: objects/ab/cdef... -> abcdef...
+		rel, _ := filepath.Rel(objectsDir, path)
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 2 {
+			hash := parts[0] + parts[1]
+			if !referencedHashes[hash] {
+				orphanCount++
+				orphanSize += info.Size()
+			}
+		}
+		return nil
+	})
+
+	// Display analysis
+	totalSize := removeSize + orphanSize
+	fmt.Printf("Snap Clean Analysis:\n\n")
+	fmt.Printf("  Total snapshots: %d\n", len(snapshots))
+	fmt.Printf("  Safe to remove:  %d snapshots\n", len(toRemove))
+	fmt.Printf("  Keeping:         %d snapshots\n", len(toKeep))
+	fmt.Printf("  Orphaned objects: %d\n", orphanCount)
+	fmt.Printf("  Space to free:   %s\n\n", formatSize(totalSize))
+
+	if len(toRemove) > 0 {
+		fmt.Println("  Removals:")
+		for _, r := range toRemove {
+			age := now.Sub(r.snap.Timestamp)
+			ageStr := formatAge(age)
+			label := "auto"
+			if !r.snap.AutoSave {
+				label = "user"
+			}
+			fmt.Printf("    #%-4d [%s] %s (%s) — %s\n", r.snap.ID, label, r.snap.Message, ageStr, r.reason)
+		}
+		fmt.Println()
+	}
+
+	if len(toRemove) == 0 && orphanCount == 0 {
+		fmt.Println("  Already clean. Nothing to do.")
+		return
+	}
+
+	if dryRun {
+		fmt.Println("  [dry-run] No changes made.")
+		return
+	}
+
+	// Confirm or auto-proceed
+	if !autoMode {
+		fmt.Printf("Proceed? [y/n] ")
+		var answer string
+		fmt.Scanln(&answer)
+		if answer != "y" && answer != "Y" {
+			fmt.Println("Cancelled.")
+			return
+		}
+	}
+
+	// Remove snapshots
+	removed := 0
+	for _, r := range toRemove {
+		filename := fmt.Sprintf("%04d.json", r.snap.ID)
+		if err := os.Remove(filepath.Join(snapshotsDir, filename)); err == nil {
+			removed++
+		}
+	}
+
+	// Remove orphaned objects
+	orphansRemoved := 0
+	filepath.Walk(objectsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(objectsDir, path)
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 2 {
+			hash := parts[0] + parts[1]
+			if !referencedHashes[hash] {
+				os.Remove(path)
+				orphansRemoved++
+			}
+		}
+		return nil
+	})
+
+	// Clean empty object directories
+	entries, _ := os.ReadDir(objectsDir)
+	for _, e := range entries {
+		if e.IsDir() {
+			dirPath := filepath.Join(objectsDir, e.Name())
+			sub, _ := os.ReadDir(dirPath)
+			if len(sub) == 0 {
+				os.Remove(dirPath)
+			}
+		}
+	}
+
+	fmt.Printf("\nCleaned: %d snapshots removed, %d orphaned objects removed\n", removed, orphansRemoved)
+	fmt.Printf("Freed: %s\n", formatSize(totalSize))
+}
+
+func buildTreeKey(tree map[string]string) string {
+	keys := make([]string, 0, len(tree))
+	for k := range tree {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString(":")
+		b.WriteString(tree[k])
+		b.WriteString(";")
+	}
+	return b.String()
+}
+
+func formatSize(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+}
+
+func formatAge(d time.Duration) string {
+	if d < time.Hour {
+		return fmt.Sprintf("%d min ago", int(d.Minutes()))
+	} else if d < 24*time.Hour {
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	}
+	return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+}
+
 func cmdStatus() {
 	engine := requireInit()
 
@@ -601,18 +939,106 @@ func cmdRestoreFile() {
 		fatal("file '%s' not found in snapshot #%d", filePath, id)
 	}
 
+	// Auto-save current file state before restoring
+	fullPath := filepath.Join(root, filePath)
+	if currentData, err := os.ReadFile(fullPath); err == nil {
+		currentHash, _ := objStore.Write(currentData)
+		tree := map[string]string{filePath: currentHash}
+		autoSnap, _ := engine.SaveSingleFileWithAutoSave(filePath, fmt.Sprintf("auto-save %s before restore from #%d", filePath, id), tree, true)
+		if autoSnap != nil {
+			fmt.Printf("Auto-saved current %s as #%d\n", filePath, autoSnap.ID)
+		}
+	}
+
 	data, err := objStore.Read(hash)
 	if err != nil {
 		fatal("read object: %v", err)
 	}
 
-	fullPath := filepath.Join(root, filePath)
 	os.MkdirAll(filepath.Dir(fullPath), 0755)
 	if err := os.WriteFile(fullPath, data, 0644); err != nil {
 		fatal("write file: %v", err)
 	}
 
 	fmt.Printf("Restored %s from snapshot #%d\n", filePath, id)
+}
+
+func cmdWatch() {
+	_ = requireInit()
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+	watchFile := filepath.Join(snapPath, "watchlist.json")
+
+	if len(os.Args) < 3 {
+		// Show current watchlist
+		files := loadWatchlist(watchFile)
+		if len(files) == 0 {
+			fmt.Println("No files being watched.")
+			fmt.Println("Usage: snap watch <file>     — add file to watchlist")
+			fmt.Println("       snap watch rm <file>  — remove from watchlist")
+			return
+		}
+		fmt.Printf("👁  Watched files (%d):\n\n", len(files))
+		for _, f := range files {
+			fmt.Printf("  • %s\n", f)
+		}
+		fmt.Println("\nThese files get auto-checkpointed on every change.")
+		return
+	}
+
+	if os.Args[2] == "rm" || os.Args[2] == "remove" {
+		if len(os.Args) < 4 {
+			fatal("usage: snap watch rm <file>")
+		}
+		filePath := os.Args[3]
+		files := loadWatchlist(watchFile)
+		var updated []string
+		for _, f := range files {
+			if f != filePath {
+				updated = append(updated, f)
+			}
+		}
+		saveWatchlist(watchFile, updated)
+		fmt.Printf("Removed %s from watchlist\n", filePath)
+		return
+	}
+
+	filePath := os.Args[2]
+
+	// Verify file exists
+	fullPath := filepath.Join(root, filePath)
+	if _, err := os.Stat(fullPath); err != nil {
+		fatal("file not found: %s", filePath)
+	}
+
+	files := loadWatchlist(watchFile)
+	for _, f := range files {
+		if f == filePath {
+			fmt.Printf("%s is already being watched\n", filePath)
+			return
+		}
+	}
+
+	files = append(files, filePath)
+	saveWatchlist(watchFile, files)
+	fmt.Printf("👁  Now watching: %s\n", filePath)
+	fmt.Println("   Auto-checkpoint on every change detected.")
+}
+
+func loadWatchlist(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var files []string
+	json.Unmarshal(data, &files)
+	return files
+}
+
+func saveWatchlist(path string, files []string) {
+	data, _ := json.MarshalIndent(files, "", "  ")
+	os.WriteFile(path, data, 0644)
 }
 
 func cmdPin(pin bool) {
@@ -670,6 +1096,10 @@ func cmdRecord() {
 
 		// Daemonize: fork self with --daemon flag
 		if len(os.Args) > 3 && os.Args[3] == "--daemon" {
+			// Save initial checkpoint before recording
+			engine := snapshot.NewEngine(root)
+			engine.Save("recording started", true)
+
 			rec := recorder.New(root, recorder.DefaultConfig())
 			if err := rec.Start(); err != nil {
 				fatal("start recording: %v", err)
@@ -749,7 +1179,7 @@ func cmdRewind() {
 	_ = requireInit()
 
 	if len(os.Args) < 3 {
-		fatal("usage: snap rewind <time>\n\nExamples:\n  snap rewind \"5 minutes ago\"\n  snap rewind \"2:47 PM\"\n  snap rewind \"14:30\"")
+		fatal("usage: snap rewind <time>\n\nExamples:\n  snap rewind \"5 minutes ago\"\n  snap rewind \"2:47 PM\"\n  snap rewind \"14:30\"\n  snap rewind \"2024-08-16 14:30:05\"\n  snap rewind \"Aug 16 14:30\"")
 	}
 
 	root, _ := os.Getwd()
@@ -759,7 +1189,7 @@ func cmdRewind() {
 	target := parseTimeSpec(timeStr)
 
 	if target.IsZero() {
-		fatal("couldn't parse time: %s\n\nExamples: \"5 minutes ago\", \"2:47 PM\", \"14:30\"", timeStr)
+		fatal("couldn't parse time: %s\n\nExamples: \"5 minutes ago\", \"2:47 PM\", \"14:30\", \"2024-08-16 14:30:05\"", timeStr)
 	}
 
 	tl := loadTimeline(snapPath)
@@ -824,6 +1254,8 @@ func cmdTimeline() {
 
 	fmt.Printf("Timeline — last %d changes (total: %d)\n\n", min(limit, len(changes)), len(changes))
 
+	timeFmt := "Jan 02 15:04:05"
+
 	for i := start; i < len(changes); i++ {
 		c := changes[i]
 		icon := "  "
@@ -842,7 +1274,7 @@ func cmdTimeline() {
 		}
 
 		fmt.Printf("  %s %s  %s %s%s\n",
-			c.Timestamp.Format("15:04:05"),
+			c.Timestamp.Format(timeFmt),
 			icon,
 			c.Path,
 			c.Action,
@@ -851,9 +1283,10 @@ func cmdTimeline() {
 	}
 
 	fmt.Printf("\n  Span: %s → %s\n",
-		changes[0].Timestamp.Format("15:04:05"),
-		changes[len(changes)-1].Timestamp.Format("15:04:05"),
+		changes[0].Timestamp.Format(timeFmt),
+		changes[len(changes)-1].Timestamp.Format(timeFmt),
 	)
+	fmt.Println("  Tip: copy a timestamp above and use: snap rewind \"<timestamp>\"")
 }
 
 func loadTimeline(snapPath string) *delta.Timeline {
@@ -885,15 +1318,43 @@ func parseTimeSpec(spec string) time.Time {
 		return time.Time{}
 	}
 
-	formats := []string{
-		"3:04 PM",
-		"3:04PM",
-		"15:04",
-		"15:04:05",
-		"3:04:05 PM",
+	// Full date-time formats (exact timestamps)
+	fullFormats := []string{
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02T15:04",
+		"Jan 2 15:04:05",
+		"Jan 2 15:04",
+		"Jan 02 15:04:05",
+		"Jan 02 15:04",
+		"2 Jan 15:04:05",
+		"2 Jan 15:04",
+		"02 Jan 15:04",
 	}
 
-	for _, format := range formats {
+	for _, format := range fullFormats {
+		t, err := time.ParseInLocation(format, spec, now.Location())
+		if err == nil {
+			// If year is zero (formats without year), use current year
+			if t.Year() == 0 {
+				t = time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
+			}
+			return t
+		}
+	}
+
+	// Time-only formats (assumes today)
+	timeFormats := []string{
+		"3:04 PM",
+		"3:04PM",
+		"3:04:05 PM",
+		"3:04:05PM",
+		"15:04",
+		"15:04:05",
+	}
+
+	for _, format := range timeFormats {
 		t, err := time.Parse(format, spec)
 		if err == nil {
 			return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
@@ -971,10 +1432,18 @@ Continuous Recording:
   rewind <time>              Rewind project to any recorded moment
   timeline [n]               Show last n changes (default 20)
 
-Time Formats:
+Maintenance:
+  clean                      Analyze and remove safe-to-delete snapshots
+  clean --dry-run            Show what would be removed (no changes)
+  clean --auto               Remove without confirmation (for automation)
+
+Time Formats (for rewind):
   "5 minutes ago"            Relative time
   "2:47 PM"                  12-hour format
   "14:30"                    24-hour format
+  "14:30:05"                 With seconds (same as timeline output)
+  "2024-08-16 14:30:05"      Full date-time
+  "Aug 16 14:30"             Month day time
 
 Other:
   version                    Show version

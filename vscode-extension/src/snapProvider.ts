@@ -58,12 +58,12 @@ export class FileItem extends vscode.TreeItem {
         super(filePath, vscode.TreeItemCollapsibleState.None);
 
         this.iconPath = new vscode.ThemeIcon('file');
-        this.tooltip = `Click to view content at snapshot #${snapshotId}`;
+        this.tooltip = `Click to diff with current • Right-click for more`;
         this.contextValue = 'snapshotFile';
 
         this.command = {
-            command: 'snap.showFile',
-            title: 'Show File',
+            command: 'snap.diffFile',
+            title: 'Diff File',
             arguments: [this],
         };
     }

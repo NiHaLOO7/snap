@@ -465,10 +465,12 @@ CHANGES SINCE LAST SNAPSHOT
 | Action | How |
 |--------|-----|
 | **Save checkpoint** | Click save icon (top of Timeline panel) → type message → optional description |
-| **View file at checkpoint** | Expand checkpoint → click any file |
-| **Diff file vs current** | Expand checkpoint → click diff icon on a file |
-| **Restore checkpoint** | Right-click checkpoint → Restore |
-| **Delete checkpoint** | Click trash icon on checkpoint |
+| **Diff file vs current** | Expand checkpoint → click any file |
+| **View file at checkpoint** | Expand checkpoint → right-click file → "Show File" |
+| **Restore checkpoint** | Click restore icon (↩) on checkpoint, or right-click → Restore |
+| **Delete checkpoint** | Click trash icon (🗑) on checkpoint, or right-click → Delete |
+| **Restore single file** | Click restore icon (↩) on a file inside checkpoint |
+| **Save current file** | Right-click in editor → "Snap: Save This File" |
 | **Refresh** | Click refresh icon (top of Timeline panel) |
 
 ### Diff View
@@ -607,16 +609,18 @@ snap record status
 snap timeline
 Timeline — last 20 changes (total: 47)
 
-  14:30:12 ~ src/auth.go modify
-  14:30:15 + src/middleware.go create
-  14:31:02 ~ src/auth.go modify [agent]
-  14:31:02 ~ src/handler.go modify [agent]
+  Aug 16 14:30:12 ~ src/auth.go modify
+  Aug 16 14:30:15 + src/middleware.go create
+  Aug 16 14:31:02 ~ src/auth.go modify [agent]
+  Aug 16 14:31:02 ~ src/handler.go modify [agent]
   ...
 
-# Rewind to any moment
+# Rewind to any moment (copy timestamp from timeline output)
 snap rewind "5 minutes ago"
 snap rewind "2:47 PM"
-snap rewind "14:30"
+snap rewind "14:30:05"
+snap rewind "Aug 16 14:30"
+snap rewind "2024-08-16 14:30:05"
 
 # Stop recording
 snap record stop
@@ -659,6 +663,108 @@ snap pin 3        # Pin — never auto-deleted
 snap unpin 3      # Unpin
 snap list         # Shows ⭐ pinned tag
 ```
+
+---
+
+## Watch Critical Files
+
+Mark files for automatic checkpointing on every change — ideal for config files, migrations, or anything dangerous to lose:
+
+```bash
+# Add a file to watchlist
+snap watch add config/database.yml
+
+# List watched files
+snap watch list
+Watched files:
+  config/database.yml
+  db/migrations/latest.sql
+
+# Remove from watchlist
+snap watch remove config/database.yml
+```
+
+When recording is active, any change to a watched file automatically creates a single-file checkpoint. No manual save needed.
+
+---
+
+## Garbage Collection
+
+### Manual Clean
+
+Analyze and remove safe-to-delete snapshots:
+
+```bash
+$ snap clean
+
+Snap Clean Analysis:
+
+  Total snapshots: 89
+  Safe to remove:  62 snapshots
+  Keeping:         27 snapshots
+  Orphaned objects: 15
+  Space to free:   290.4 MB
+
+  Removals:
+    #12  [auto] auto-save before restore (3 days ago) — superseded by newer auto-save within 5 min
+    #15  [auto] auto-save before edit (5 days ago) — duplicate of #14 (identical state)
+    ...
+
+Proceed? [y/n]
+```
+
+Flags:
+- `snap clean --dry-run` — show what would be removed, no changes
+- `snap clean --auto` — remove without confirmation (for scripts/automation)
+
+### Automatic GC
+
+When recording is active, the daemon runs garbage collection **every hour** automatically:
+- Removes duplicate snapshots (same project state)
+- Removes superseded auto-saves (newer auto-save within 5 minutes)
+- Removes old auto-saves beyond 7-day retention
+- Cleans orphaned objects (unreferenced blobs)
+- **Never touches pinned or user-created recent snapshots**
+
+Zero configuration needed — just works in the background.
+
+---
+
+## Agent Integration
+
+`snap init` automatically creates instruction files that AI coding agents read:
+
+- **CLAUDE.md** — for Claude Code
+- **.cursorrules** — for Cursor
+- **.github/copilot-instructions.md** — for GitHub Copilot
+
+These teach agents to use snap efficiently: save before/after changes, use recording for risky work, pin important states, watch critical files.
+
+### Claude Code Hook (Auto-save before edits)
+
+Add to `~/.claude/settings.json` for automatic protection:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -d .snap ]; then FILE=$(echo \"$TOOL_INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('file_path',''))\" 2>/dev/null); if [ -n \"$FILE\" ] && [ -f \"$FILE\" ]; then snap save-file \"$FILE\" \"before agent edit\" 2>/dev/null; fi; fi",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This auto-saves every file before any agent edits it — zero manual work, fully automatic safety net.
 
 ---
 
@@ -713,13 +819,18 @@ snap/
 - [x] VS Code extension with native diff
 - [x] Cross-platform binaries (macOS/Windows/Linux)
 - [x] Continuous recording (background file watcher)
-- [x] Rewind to any timestamp
+- [x] Rewind to any timestamp (multiple formats supported)
 - [x] Timeline viewer with agent detection
 - [x] Auto-create `.snapignore` + auto-add `.snap` to `.gitignore`
 - [x] `snap init` = repair mode (fixes broken structure)
+- [x] Agent instruction files (CLAUDE.md, .cursorrules, copilot-instructions)
+- [x] Claude Code PreToolUse hook (auto-save before agent edits)
+- [x] Watch critical files (auto-checkpoint on change)
+- [x] Garbage collection (`snap clean` + automatic hourly GC)
+- [x] Auto-save before single file restore
 - [ ] `snap when` — binary search timeline to find breaking change
+- [ ] `snap stash` — named working states for context switching
 - [ ] Snapshot export to Git commit
-- [ ] Auto-save hooks (before/after agent runs)
 
 ---
 

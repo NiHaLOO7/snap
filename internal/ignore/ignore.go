@@ -13,6 +13,7 @@ var defaultIgnores = []string{
 	".snap",
 	".git",
 	".claude",
+	".github",
 	"node_modules",
 	"vendor",
 	"__pycache__",
@@ -27,6 +28,7 @@ var defaultIgnores = []string{
 	"tmp",
 	".cursorrules",
 	".cursor",
+	"CLAUDE.md",
 }
 
 type Matcher struct {

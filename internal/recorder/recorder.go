@@ -1,9 +1,11 @@
 package recorder
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/nihalkumar/snap/internal/delta"
 	"github.com/nihalkumar/snap/internal/ignore"
+	"github.com/nihalkumar/snap/internal/snapshot"
 	"github.com/nihalkumar/snap/internal/store"
 )
 
@@ -39,13 +42,14 @@ type Recorder struct {
 	mu        sync.Mutex
 	lastEvent map[string]time.Time
 	fileState map[string]string // path -> last known hash
+	watchlist map[string]bool
 	running   bool
 	stopCh    chan struct{}
 }
 
 func New(rootPath string, config Config) *Recorder {
 	snapPath := filepath.Join(rootPath, ".snap")
-	return &Recorder{
+	r := &Recorder{
 		rootPath:  rootPath,
 		snapPath:  snapPath,
 		store:     store.New(snapPath),
@@ -54,7 +58,25 @@ func New(rootPath string, config Config) *Recorder {
 		config:    config,
 		lastEvent: make(map[string]time.Time),
 		fileState: make(map[string]string),
+		watchlist: make(map[string]bool),
 		stopCh:    make(chan struct{}),
+	}
+	r.loadWatchlist()
+	return r
+}
+
+func (r *Recorder) loadWatchlist() {
+	watchFile := filepath.Join(r.snapPath, "watchlist.json")
+	data, err := os.ReadFile(watchFile)
+	if err != nil {
+		return
+	}
+	var files []string
+	if err := json.Unmarshal(data, &files); err != nil {
+		return
+	}
+	for _, f := range files {
+		r.watchlist[f] = true
 	}
 }
 
@@ -118,6 +140,17 @@ func (r *Recorder) IsRunning() bool {
 }
 
 func (r *Recorder) buildInitialState() error {
+	now := time.Now()
+	hasExistingTimeline := false
+
+	entries, _ := os.ReadDir(filepath.Join(r.snapPath, "timeline"))
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".seg" {
+			hasExistingTimeline = true
+			break
+		}
+	}
+
 	return filepath.Walk(r.rootPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
@@ -144,8 +177,20 @@ func (r *Recorder) buildInitialState() error {
 			return nil
 		}
 
-		hash := store.Hash(data)
+		hash, _ := r.store.Write(data)
 		r.fileState[relPath] = hash
+
+		// Record initial state if no existing timeline
+		if !hasExistingTimeline {
+			r.timeline.Record(&delta.Change{
+				Timestamp: now,
+				Path:      relPath,
+				Action:    "create",
+				NewHash:   hash,
+				FullSize:  len(data),
+			})
+		}
+
 		return nil
 	})
 }
@@ -316,6 +361,13 @@ func (r *Recorder) handleEvent(event fsnotify.Event) {
 			NewHash:   newHash,
 			FullSize:  len(data),
 		})
+
+		// Auto-checkpoint watched files
+		if r.watchlist[relPath] {
+			engine := snapshot.NewEngine(r.rootPath)
+			tree := map[string]string{relPath: newHash}
+			engine.SaveSingleFileWithAutoSave(relPath, fmt.Sprintf("watch: %s changed", relPath), tree, true)
+		}
 	}
 }
 
@@ -347,11 +399,114 @@ func (r *Recorder) compactionLoop() {
 			usage, _ := r.timeline.DiskUsage()
 			maxBytes := r.config.MaxStorage * 1024 * 1024
 			if usage > maxBytes {
-				// Aggressively compact if over limit
 				r.timeline.Compact(r.config.Retention / 2)
+			}
+
+			// Auto-GC snapshots
+			r.autoGC()
+		}
+	}
+}
+
+func (r *Recorder) autoGC() {
+	engine := snapshot.NewEngine(r.rootPath)
+	snapshots, err := engine.List()
+	if err != nil || len(snapshots) < 20 {
+		return
+	}
+
+	now := time.Now()
+	retention := r.config.Retention
+	snapshotsDir := filepath.Join(r.snapPath, "snapshots")
+
+	// Build tree fingerprints for duplicate detection
+	seenTrees := make(map[string]bool)
+	var removed int
+
+	for _, snap := range snapshots {
+		if snap.Pinned {
+			continue
+		}
+
+		// Remove duplicate trees
+		treeKey := buildSnapshotTreeKey(snap.Tree)
+		if seenTrees[treeKey] {
+			filename := fmt.Sprintf("%04d.json", snap.ID)
+			os.Remove(filepath.Join(snapshotsDir, filename))
+			removed++
+			continue
+		}
+		seenTrees[treeKey] = true
+
+		// Remove old auto-saves beyond retention
+		if snap.AutoSave && now.Sub(snap.Timestamp) > retention {
+			filename := fmt.Sprintf("%04d.json", snap.ID)
+			os.Remove(filepath.Join(snapshotsDir, filename))
+			removed++
+			continue
+		}
+
+		// Remove superseded auto-saves (newer auto-save within 5 min)
+		if snap.AutoSave {
+			for _, other := range snapshots {
+				if other.ID > snap.ID && other.AutoSave && other.Timestamp.Sub(snap.Timestamp) < 5*time.Minute {
+					filename := fmt.Sprintf("%04d.json", snap.ID)
+					os.Remove(filepath.Join(snapshotsDir, filename))
+					removed++
+					break
+				}
 			}
 		}
 	}
+
+	// Clean orphaned objects if we removed snapshots
+	if removed > 0 {
+		r.cleanOrphanedObjects()
+	}
+}
+
+func (r *Recorder) cleanOrphanedObjects() {
+	engine := snapshot.NewEngine(r.rootPath)
+	snapshots, _ := engine.List()
+
+	referenced := make(map[string]bool)
+	for _, snap := range snapshots {
+		for _, hash := range snap.Tree {
+			referenced[hash] = true
+		}
+	}
+
+	objectsDir := filepath.Join(r.snapPath, "objects")
+	filepath.Walk(objectsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(objectsDir, path)
+		parts := strings.Split(rel, string(filepath.Separator))
+		if len(parts) == 2 {
+			hash := parts[0] + parts[1]
+			if !referenced[hash] {
+				os.Remove(path)
+			}
+		}
+		return nil
+	})
+}
+
+func buildSnapshotTreeKey(tree map[string]string) string {
+	keys := make([]string, 0, len(tree))
+	for k := range tree {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString(":")
+		b.WriteString(tree[k])
+		b.WriteString(";")
+	}
+	return b.String()
 }
 
 func (r *Recorder) GetTimeline() *delta.Timeline {
