@@ -57,6 +57,16 @@
         "icon": "$(trash)"
       },
       {
+        "command": "snap.saveFile",
+        "title": "Snap: Save This File",
+        "icon": "$(save)"
+      },
+      {
+        "command": "snap.restoreFile",
+        "title": "Snap: Restore This File",
+        "icon": "$(discard)"
+      },
+      {
         "command": "snap.refresh",
         "title": "Snap: Refresh",
         "icon": "$(refresh)"
@@ -96,6 +106,12 @@
           "group": "navigation"
         }
       ],
+      "editor/context": [
+        {
+          "command": "snap.saveFile",
+          "group": "snap@1"
+        }
+      ],
       "view/item/context": [
         {
           "command": "snap.restore",
@@ -111,6 +127,11 @@
           "command": "snap.diffFile",
           "when": "viewItem == snapshotFile",
           "group": "inline"
+        },
+        {
+          "command": "snap.restoreFile",
+          "when": "viewItem == snapshotFile",
+          "group": "1_actions"
         }
       ]
     }

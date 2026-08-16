@@ -3,13 +3,17 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/nihalkumar/snap/internal/delta"
 	"github.com/nihalkumar/snap/internal/diff"
+	"github.com/nihalkumar/snap/internal/recorder"
 	"github.com/nihalkumar/snap/internal/snapshot"
 	"github.com/nihalkumar/snap/internal/store"
 )
@@ -41,6 +45,20 @@ func main() {
 		cmdDelete()
 	case "status":
 		cmdStatus()
+	case "pin":
+		cmdPin(true)
+	case "unpin":
+		cmdPin(false)
+	case "save-file":
+		cmdSaveFile()
+	case "restore-file":
+		cmdRestoreFile()
+	case "record":
+		cmdRecord()
+	case "rewind":
+		cmdRewind()
+	case "timeline":
+		cmdTimeline()
 	case "version":
 		fmt.Printf("snap v%s\n", version)
 	case "help", "--help", "-h":
@@ -60,7 +78,15 @@ func cmdInit() {
 
 	engine := snapshot.NewEngine(root)
 	if engine.IsInitialized() {
-		fmt.Println("Already initialized in this directory.")
+		fixed, err := engine.Repair()
+		if err != nil {
+			fatal("repair: %v", err)
+		}
+		if fixed > 0 {
+			fmt.Printf("Repaired .snap/ structure (%d broken references removed)\n", fixed)
+		} else {
+			fmt.Println("Already initialized. Structure verified ✓")
+		}
 		return
 	}
 
@@ -138,12 +164,17 @@ func cmdList() {
 			if i == len(userSnaps)-1 {
 				marker = "◉"
 			}
-			fmt.Printf("  %s #%-4d  %s  %s  (%d files)\n",
+			pinTag := ""
+			if snap.Pinned {
+				pinTag = " \033[33m⭐ pinned\033[0m"
+			}
+			fmt.Printf("  %s #%-4d  %s  %s  (%d files)%s\n",
 				marker,
 				snap.ID,
 				snap.Timestamp.Format("Jan 02 15:04"),
 				snap.Message,
 				snap.FileCount,
+				pinTag,
 			)
 			if snap.Description != "" {
 				fmt.Printf("  │         \033[2m%s\033[0m\n", snap.Description)
@@ -500,6 +531,394 @@ func cmdStatus() {
 	fmt.Printf("\n  %d modified, %d added, %d deleted\n", modified, added, deleted)
 }
 
+func cmdSaveFile() {
+	_ = requireInit()
+
+	if len(os.Args) < 3 {
+		fatal("usage: snap save-file <file> [message]")
+	}
+
+	filePath := os.Args[2]
+	message := "file checkpoint"
+	if len(os.Args) > 3 {
+		message = strings.Join(os.Args[3:], " ")
+	}
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+	objStore := store.New(snapPath)
+
+	fullPath := filepath.Join(root, filePath)
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		fatal("read file: %v", err)
+	}
+
+	hash, err := objStore.Write(data)
+	if err != nil {
+		fatal("store file: %v", err)
+	}
+
+	engine := snapshot.NewEngine(root)
+	tree := map[string]string{filePath: hash}
+
+	snap, err := engine.SaveSingleFile(filePath, message, tree)
+	if err != nil {
+		fatal("save: %v", err)
+	}
+
+	fmt.Printf("Saved file checkpoint #%d\n", snap.ID)
+	fmt.Printf("  File:     %s\n", filePath)
+	fmt.Printf("  Message:  %s\n", message)
+}
+
+func cmdRestoreFile() {
+	_ = requireInit()
+
+	if len(os.Args) < 4 {
+		fatal("usage: snap restore-file <snapshot-id> <file>")
+	}
+
+	id, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		fatal("invalid snapshot id: %s", os.Args[2])
+	}
+
+	filePath := os.Args[3]
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+	objStore := store.New(snapPath)
+
+	engine := snapshot.NewEngine(root)
+	snap, err := engine.Load(id)
+	if err != nil {
+		fatal("load snapshot: %v", err)
+	}
+
+	hash, exists := snap.Tree[filePath]
+	if !exists {
+		fatal("file '%s' not found in snapshot #%d", filePath, id)
+	}
+
+	data, err := objStore.Read(hash)
+	if err != nil {
+		fatal("read object: %v", err)
+	}
+
+	fullPath := filepath.Join(root, filePath)
+	os.MkdirAll(filepath.Dir(fullPath), 0755)
+	if err := os.WriteFile(fullPath, data, 0644); err != nil {
+		fatal("write file: %v", err)
+	}
+
+	fmt.Printf("Restored %s from snapshot #%d\n", filePath, id)
+}
+
+func cmdPin(pin bool) {
+	engine := requireInit()
+
+	if len(os.Args) < 3 {
+		if pin {
+			fatal("usage: snap pin <id>")
+		} else {
+			fatal("usage: snap unpin <id>")
+		}
+	}
+
+	id, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		fatal("invalid snapshot id: %s", os.Args[2])
+	}
+
+	if err := engine.SetPinned(id, pin); err != nil {
+		fatal("pin: %v", err)
+	}
+
+	if pin {
+		fmt.Printf("📌 Pinned snapshot #%d — will never be auto-deleted\n", id)
+	} else {
+		fmt.Printf("Unpinned snapshot #%d\n", id)
+	}
+}
+
+func cmdRecord() {
+	_ = requireInit()
+
+	if len(os.Args) < 3 {
+		fatal("usage: snap record <start|stop|status>")
+	}
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+
+	switch os.Args[2] {
+	case "start":
+		pidPath := filepath.Join(snapPath, "recorder.pid")
+		if _, err := os.Stat(pidPath); err == nil {
+			pidData, _ := os.ReadFile(pidPath)
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
+			if pid > 0 {
+				proc, err := os.FindProcess(pid)
+				if err == nil && isProcessRunning(proc) {
+					fmt.Println("⏺  Recording already running.")
+					return
+				}
+			}
+			os.Remove(pidPath)
+		}
+
+		// Daemonize: fork self with --daemon flag
+		if len(os.Args) > 3 && os.Args[3] == "--daemon" {
+			rec := recorder.New(root, recorder.DefaultConfig())
+			if err := rec.Start(); err != nil {
+				fatal("start recording: %v", err)
+			}
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt)
+			<-sigCh
+
+			rec.Stop()
+			return
+		}
+
+		// Launch daemon process
+		exe, _ := os.Executable()
+		cmd := execCommand(exe, "record", "start", "--daemon")
+		cmd.Dir = root
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			fatal("start daemon: %v", err)
+		}
+		cmd.Process.Release()
+
+		time.Sleep(200 * time.Millisecond)
+
+		fmt.Println("⏺  Recording started — watching all file changes")
+		fmt.Println("   Every change is tracked with timestamp.")
+		fmt.Println("   Use 'snap timeline' to see changes.")
+		fmt.Println("   Use 'snap rewind' to jump to any moment.")
+		fmt.Println("   Use 'snap record stop' to stop recording.")
+
+	case "stop":
+		pidPath := filepath.Join(snapPath, "recorder.pid")
+		pidData, err := os.ReadFile(pidPath)
+		if err != nil {
+			fmt.Println("No recording session running.")
+			return
+		}
+
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(pidData)))
+		if pid > 0 {
+			proc, err := os.FindProcess(pid)
+			if err == nil {
+				proc.Signal(os.Interrupt)
+			}
+		}
+
+		os.Remove(pidPath)
+		fmt.Println("⏹  Recording stopped.")
+
+	case "status":
+		pidPath := filepath.Join(snapPath, "recorder.pid")
+		if _, err := os.Stat(pidPath); err == nil {
+			pidData, _ := os.ReadFile(pidPath)
+			fmt.Printf("⏺  Recording active (PID %s)\n", strings.TrimSpace(string(pidData)))
+
+			tl := loadTimeline(snapPath)
+			changes, _ := tl.LoadAll()
+			if len(changes) > 0 {
+				duration := changes[len(changes)-1].Timestamp.Sub(changes[0].Timestamp)
+				fmt.Printf("   %d changes recorded over %s\n", len(changes), duration.Round(time.Second))
+
+				usage, _ := tl.DiskUsage()
+				fmt.Printf("   Storage: %.1f KB\n", float64(usage)/1024)
+			}
+		} else {
+			fmt.Println("⏹  Not recording.")
+		}
+
+	default:
+		fatal("usage: snap record <start|stop|status>")
+	}
+}
+
+func cmdRewind() {
+	_ = requireInit()
+
+	if len(os.Args) < 3 {
+		fatal("usage: snap rewind <time>\n\nExamples:\n  snap rewind \"5 minutes ago\"\n  snap rewind \"2:47 PM\"\n  snap rewind \"14:30\"")
+	}
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+
+	timeStr := strings.Join(os.Args[2:], " ")
+	target := parseTimeSpec(timeStr)
+
+	if target.IsZero() {
+		fatal("couldn't parse time: %s\n\nExamples: \"5 minutes ago\", \"2:47 PM\", \"14:30\"", timeStr)
+	}
+
+	tl := loadTimeline(snapPath)
+	state := tl.GetStateAt(target)
+
+	if len(state) == 0 {
+		fatal("no recorded state at %s", target.Format("15:04:05"))
+	}
+
+	objStore := store.New(snapPath)
+
+	// Auto-save before rewind
+	engine := snapshot.NewEngine(root)
+	autoSnap, err := engine.Save(fmt.Sprintf("auto-save before rewind to %s", target.Format("15:04:05")), true)
+	if err != nil {
+		fatal("auto-save: %v", err)
+	}
+	fmt.Printf("Auto-saved as #%d\n", autoSnap.ID)
+
+	restored := 0
+	for path, hash := range state {
+		data, err := objStore.Read(hash)
+		if err != nil {
+			continue
+		}
+
+		fullPath := filepath.Join(root, path)
+		os.MkdirAll(filepath.Dir(fullPath), 0755)
+		os.WriteFile(fullPath, data, 0644)
+		restored++
+	}
+
+	fmt.Printf("⏪ Rewound to %s (%d files restored)\n", target.Format("15:04:05"), restored)
+}
+
+func cmdTimeline() {
+	_ = requireInit()
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+	tl := loadTimeline(snapPath)
+
+	changes, err := tl.LoadAll()
+	if err != nil || len(changes) == 0 {
+		fmt.Println("No timeline data. Start recording with: snap record start")
+		return
+	}
+
+	limit := 20
+	if len(os.Args) > 2 {
+		if n, err := strconv.Atoi(os.Args[2]); err == nil {
+			limit = n
+		}
+	}
+
+	start := 0
+	if len(changes) > limit {
+		start = len(changes) - limit
+	}
+
+	tl.DetectAgentBurst(changes)
+
+	fmt.Printf("Timeline — last %d changes (total: %d)\n\n", min(limit, len(changes)), len(changes))
+
+	for i := start; i < len(changes); i++ {
+		c := changes[i]
+		icon := "  "
+		switch c.Action {
+		case "create":
+			icon = "\033[32m+\033[0m"
+		case "modify":
+			icon = "\033[33m~\033[0m"
+		case "delete":
+			icon = "\033[31m-\033[0m"
+		}
+
+		agent := ""
+		if c.IsAgent {
+			agent = " \033[35m[agent]\033[0m"
+		}
+
+		fmt.Printf("  %s %s  %s %s%s\n",
+			c.Timestamp.Format("15:04:05"),
+			icon,
+			c.Path,
+			c.Action,
+			agent,
+		)
+	}
+
+	fmt.Printf("\n  Span: %s → %s\n",
+		changes[0].Timestamp.Format("15:04:05"),
+		changes[len(changes)-1].Timestamp.Format("15:04:05"),
+	)
+}
+
+func loadTimeline(snapPath string) *delta.Timeline {
+	tl := delta.NewTimeline(snapPath)
+	tl.Init()
+	return tl
+}
+
+func parseTimeSpec(spec string) time.Time {
+	now := time.Now()
+
+	if strings.Contains(spec, "ago") {
+		parts := strings.Fields(spec)
+		if len(parts) >= 2 {
+			n, err := strconv.Atoi(parts[0])
+			if err != nil {
+				return time.Time{}
+			}
+			unit := parts[1]
+			switch {
+			case strings.HasPrefix(unit, "second"):
+				return now.Add(-time.Duration(n) * time.Second)
+			case strings.HasPrefix(unit, "minute"):
+				return now.Add(-time.Duration(n) * time.Minute)
+			case strings.HasPrefix(unit, "hour"):
+				return now.Add(-time.Duration(n) * time.Hour)
+			}
+		}
+		return time.Time{}
+	}
+
+	formats := []string{
+		"3:04 PM",
+		"3:04PM",
+		"15:04",
+		"15:04:05",
+		"3:04:05 PM",
+	}
+
+	for _, format := range formats {
+		t, err := time.Parse(format, spec)
+		if err == nil {
+			return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
+		}
+	}
+
+	return time.Time{}
+}
+
+func execCommand(name string, args ...string) *exec.Cmd {
+	return exec.Command(name, args...)
+}
+
+func isProcessRunning(proc *os.Process) bool {
+	err := proc.Signal(nil)
+	return err == nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func requireInit() *snapshot.Engine {
 	root, err := os.Getwd()
 	if err != nil {
@@ -526,7 +945,7 @@ func printUsage() {
 Usage:
   snap <command> [arguments]
 
-Commands:
+Checkpoints:
   init                       Initialize snap in current directory
   save [message] [-d "desc"] Save a snapshot (description optional)
   list, ls                   List all snapshots
@@ -539,7 +958,25 @@ Commands:
   diff <id1> <id2> <file>    Diff a specific file between two snapshots
   diff ... -f                Show full line-level diff for all modified files
   delete <id>, rm <id>       Delete a snapshot
+  pin <id>                   Pin a snapshot (never auto-deleted)
+  unpin <id>                 Unpin a snapshot
+  save-file <file> [msg]     Save checkpoint of a single file
+  restore-file <id> <file>   Restore a single file from any snapshot
   status                     Show changes since last snapshot
+
+Continuous Recording:
+  record start               Start recording all file changes
+  record stop                Stop recording
+  record status              Show recording status and stats
+  rewind <time>              Rewind project to any recorded moment
+  timeline [n]               Show last n changes (default 20)
+
+Time Formats:
+  "5 minutes ago"            Relative time
+  "2:47 PM"                  12-hour format
+  "14:30"                    24-hour format
+
+Other:
   version                    Show version
   help                       Show this help
 
@@ -548,14 +985,11 @@ Examples:
   snap save "before refactoring auth"
   snap save "auth done" -d "JWT tokens working, refresh pending"
   snap list
-  snap show 3
-  snap show 3 src/main.go
-  snap diff 3
-  snap diff 3 7
-  snap diff 1 2 src/main.go
-  snap diff 3 -f
+  snap pin 3
+  snap record start
+  snap rewind "5 minutes ago"
+  snap timeline
   snap restore 3
-  snap delete 2
   snap status
 
 `, version)

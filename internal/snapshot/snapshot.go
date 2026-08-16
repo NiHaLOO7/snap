@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nihalkumar/snap/internal/ignore"
@@ -20,6 +21,7 @@ type Snapshot struct {
 	Tree        map[string]string `json:"tree"`
 	FileCount   int               `json:"file_count"`
 	AutoSave    bool              `json:"auto_save,omitempty"`
+	Pinned      bool              `json:"pinned,omitempty"`
 }
 
 type Engine struct {
@@ -43,6 +45,7 @@ func (e *Engine) Init() error {
 	dirs := []string{
 		e.snapPath,
 		filepath.Join(e.snapPath, "snapshots"),
+		filepath.Join(e.snapPath, "timeline"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -63,7 +66,90 @@ func (e *Engine) Init() error {
 		}
 	}
 
+	// Create .snapignore if not exists
+	snapignorePath := filepath.Join(e.rootPath, ".snapignore")
+	if _, err := os.Stat(snapignorePath); os.IsNotExist(err) {
+		defaultContent := `# Dependencies
+node_modules
+vendor
+.venv
+
+# Build output
+dist
+build
+*.exe
+
+# IDE / Tools
+.idea
+.cursor
+.claude
+
+# Secrets
+.env
+*.pem
+`
+		os.WriteFile(snapignorePath, []byte(defaultContent), 0644)
+	}
+
+	// Add .snap to .gitignore if git repo exists
+	gitDir := filepath.Join(e.rootPath, ".git")
+	if _, err := os.Stat(gitDir); err == nil {
+		e.ensureGitignore()
+	}
+
 	return nil
+}
+
+func (e *Engine) ensureGitignore() {
+	gitignorePath := filepath.Join(e.rootPath, ".gitignore")
+
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		// No .gitignore — create one
+		os.WriteFile(gitignorePath, []byte(".snap\n"), 0644)
+		return
+	}
+
+	lines := strings.Split(string(content), "\n")
+	hasSnap := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == ".snap" {
+			hasSnap = true
+			break
+		}
+	}
+
+	if !hasSnap {
+		toAdd := "\n# Snap checkpoints\n.snap\n"
+		os.WriteFile(gitignorePath, append(content, []byte(toAdd)...), 0644)
+	}
+}
+
+func (e *Engine) Repair() (int, error) {
+	if err := e.Init(); err != nil {
+		return 0, err
+	}
+
+	fixed := 0
+	snapshots, _ := e.List()
+	for _, snap := range snapshots {
+		changed := false
+		for path, hash := range snap.Tree {
+			if !e.store.Has(hash) {
+				delete(snap.Tree, path)
+				changed = true
+				fixed++
+			}
+		}
+		if changed {
+			snap.FileCount = len(snap.Tree)
+			data, _ := json.MarshalIndent(snap, "", "  ")
+			filename := fmt.Sprintf("%04d.json", snap.ID)
+			os.WriteFile(filepath.Join(e.snapPath, "snapshots", filename), data, 0644)
+		}
+	}
+
+	return fixed, nil
 }
 
 func (e *Engine) IsInitialized() bool {
@@ -303,6 +389,48 @@ func (e *Engine) cleanEmptyDirs(dir string) {
 		os.Remove(dir)
 		dir = filepath.Dir(dir)
 	}
+}
+
+func (e *Engine) SaveSingleFile(filePath, message string, tree map[string]string) (*Snapshot, error) {
+	nextID, err := e.nextID()
+	if err != nil {
+		return nil, err
+	}
+
+	snap := &Snapshot{
+		ID:        nextID,
+		Message:   message,
+		Timestamp: time.Now(),
+		Tree:      tree,
+		FileCount: 1,
+	}
+
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+
+	filename := fmt.Sprintf("%04d.json", snap.ID)
+	path := filepath.Join(e.snapPath, "snapshots", filename)
+	return snap, os.WriteFile(path, data, 0644)
+}
+
+func (e *Engine) SetPinned(id int, pinned bool) error {
+	snap, err := e.Load(id)
+	if err != nil {
+		return err
+	}
+
+	snap.Pinned = pinned
+
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	filename := fmt.Sprintf("%04d.json", id)
+	path := filepath.Join(e.snapPath, "snapshots", filename)
+	return os.WriteFile(path, data, 0644)
 }
 
 func rootPath(path string) string {

@@ -121,12 +121,14 @@ export function activate(context: vscode.ExtensionContext) {
                     content = content.substring(headerEnd + 2);
                 }
 
-                const ext = path.extname(item.filePath);
                 const uri = vscode.Uri.parse(`snap://snapshot/${item.snapshotId}/${item.filePath}`);
                 contentProvider.setContent(uri.toString(), content);
 
                 const doc = await vscode.workspace.openTextDocument(uri);
-                await vscode.window.showTextDocument(doc, { preview: true });
+                await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: false });
+
+                // Make document readonly after opening
+                await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
             } else {
                 vscode.window.showErrorMessage(`Show failed: ${result.error}`);
             }
@@ -162,6 +164,52 @@ export function activate(context: vscode.ExtensionContext) {
                     renderSideBySide: true,
                 }
             );
+        }),
+
+        vscode.commands.registerCommand('snap.restoreFile', async (item: FileItem) => {
+            const confirm = await vscode.window.showWarningMessage(
+                `Restore ${item.filePath} from snapshot #${item.snapshotId}? This will overwrite the current file.`,
+                'Restore',
+                'Cancel'
+            );
+
+            if (confirm !== 'Restore') {
+                return;
+            }
+
+            const result = await execSnap(workspaceRoot, ['restore-file', item.snapshotId.toString(), item.filePath]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Restored ${item.filePath} from #${item.snapshotId}`);
+            } else {
+                vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.saveFile', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage('No active file to save');
+                return;
+            }
+
+            const filePath = path.relative(workspaceRoot, editor.document.uri.fsPath);
+            const message = await vscode.window.showInputBox({
+                prompt: `Save checkpoint for ${filePath}`,
+                placeHolder: 'e.g., before changes',
+            });
+
+            if (message === undefined) {
+                return;
+            }
+
+            const args = ['save-file', filePath, message || 'file checkpoint'];
+            const result = await execSnap(workspaceRoot, args);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Saved file checkpoint: ${filePath}`);
+                snapProvider.refresh();
+            } else {
+                vscode.window.showErrorMessage(`Save failed: ${result.error}`);
+            }
         }),
 
         vscode.commands.registerCommand('snap.delete', async (item?: SnapshotItem) => {

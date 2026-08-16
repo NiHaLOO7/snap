@@ -589,6 +589,79 @@ npx @vscode/vsce package --allow-missing-repository
 
 ---
 
+## Continuous Recording
+
+Snap can record **every file change** in the background — letting you rewind to any second, not just explicit checkpoints.
+
+```bash
+# Start recording (runs as background daemon)
+snap record start
+
+# Check status
+snap record status
+⏺  Recording active (PID 12345)
+   47 changes recorded over 2h15m
+   Storage: 89.3 KB
+
+# View recent changes
+snap timeline
+Timeline — last 20 changes (total: 47)
+
+  14:30:12 ~ src/auth.go modify
+  14:30:15 + src/middleware.go create
+  14:31:02 ~ src/auth.go modify [agent]
+  14:31:02 ~ src/handler.go modify [agent]
+  ...
+
+# Rewind to any moment
+snap rewind "5 minutes ago"
+snap rewind "2:47 PM"
+snap rewind "14:30"
+
+# Stop recording
+snap record stop
+```
+
+**How it works:**
+- Background daemon watches all project files via fsnotify
+- Every file save is captured with timestamp + stored in object store
+- Changes flushed to compressed segment files every 3 seconds
+- Agent bursts auto-detected (5+ files in 3 seconds marked as `[agent]`)
+- Compaction runs hourly — old segments cleaned based on retention (default 7 days)
+- Max storage: 100MB (configurable)
+
+---
+
+## Single File Operations
+
+Save and restore individual files without affecting the rest of your project:
+
+```bash
+# Save just one file
+snap save-file src/auth.go "before refactor"
+
+# Restore a single file from any snapshot
+snap restore-file 3 src/auth.go
+```
+
+In the VS Code extension:
+- Right-click any file in editor → **"Snap: Save This File"**
+- Expand a checkpoint → right-click a file → **"Restore This File"**
+
+---
+
+## Pin Snapshots
+
+Pin important snapshots so they're never auto-deleted by garbage collection:
+
+```bash
+snap pin 3        # Pin — never auto-deleted
+snap unpin 3      # Unpin
+snap list         # Shows ⭐ pinned tag
+```
+
+---
+
 ## Architecture
 
 ```
@@ -598,7 +671,9 @@ snap/
 │   ├── store/store.go            # Content-addressed object store (SHA-256 + zlib)
 │   ├── snapshot/snapshot.go      # Save/restore/list engine
 │   ├── diff/diff.go              # Tree comparison + LCS line diff
-│   └── ignore/ignore.go          # .snapignore pattern matching
+│   ├── ignore/ignore.go          # .snapignore pattern matching (live reload)
+│   ├── delta/delta.go            # Timeline recording storage engine
+│   └── recorder/recorder.go     # File watcher daemon (fsnotify)
 ├── vscode-extension/
 │   ├── src/extension.ts          # Extension activation, commands
 │   ├── src/snapProvider.ts       # Timeline tree view (categories + files)
@@ -609,10 +684,11 @@ snap/
 ```
 
 **Tech Stack:**
-- **CLI:** Go (zero external dependencies — stdlib only)
+- **CLI:** Go
 - **Hashing:** SHA-256 (`crypto/sha256`)
 - **Compression:** zlib (`compress/zlib`)
 - **Diff:** LCS-based algorithm
+- **File Watching:** fsnotify
 - **Extension:** TypeScript, VS Code API
 - **Storage:** File-based, content-addressed
 
@@ -630,12 +706,18 @@ snap/
 - [x] File-specific diff mode
 - [x] File viewer at any checkpoint
 - [x] Checkpoint deletion
+- [x] Pin/unpin snapshots
+- [x] Single file save/restore
 - [x] Status (changes since last save)
-- [x] `.snapignore` support
+- [x] `.snapignore` support (live reload)
 - [x] VS Code extension with native diff
 - [x] Cross-platform binaries (macOS/Windows/Linux)
-- [ ] Garbage collector (time-based auto-save cleanup)
-- [ ] Named states / tags (⭐ "last known good")
+- [x] Continuous recording (background file watcher)
+- [x] Rewind to any timestamp
+- [x] Timeline viewer with agent detection
+- [x] Auto-create `.snapignore` + auto-add `.snap` to `.gitignore`
+- [x] `snap init` = repair mode (fixes broken structure)
+- [ ] `snap when` — binary search timeline to find breaking change
 - [ ] Snapshot export to Git commit
 - [ ] Auto-save hooks (before/after agent runs)
 
