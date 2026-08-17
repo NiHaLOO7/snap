@@ -70,6 +70,11 @@
         "command": "snap.refresh",
         "title": "Snap: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "snap.expandSnapshot",
+        "title": "Snap: Expand All Folders",
+        "icon": "$(expand-all)"
       }
     ],
     "viewsContainers": {
@@ -120,14 +125,19 @@
       ],
       "view/item/context": [
         {
-          "command": "snap.restore",
+          "command": "snap.expandSnapshot",
           "when": "viewItem == snapshot",
           "group": "inline@1"
         },
         {
-          "command": "snap.delete",
+          "command": "snap.restore",
           "when": "viewItem == snapshot",
           "group": "inline@2"
+        },
+        {
+          "command": "snap.delete",
+          "when": "viewItem == snapshot",
+          "group": "inline@3"
         },
         {
           "command": "snap.restore",

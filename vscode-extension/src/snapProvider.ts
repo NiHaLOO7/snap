@@ -155,15 +155,21 @@ function getCompactedChildren(tree: FolderTree, prefix: string, snapshotId: numb
 export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
     private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null>();
     readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+    private parentMap = new Map<TreeNode, TreeNode | undefined>();
 
     constructor(private workspaceRoot: string) {}
 
     refresh(): void {
+        this.parentMap.clear();
         this._onDidChangeTreeData.fire(undefined);
     }
 
     getTreeItem(element: TreeNode): vscode.TreeItem {
         return element;
+    }
+
+    getParent(element: TreeNode): TreeNode | undefined {
+        return this.parentMap.get(element);
     }
 
     async getChildren(element?: TreeNode): Promise<TreeNode[]> {
@@ -179,6 +185,7 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
             if (hasAuto) {
                 categories.push(new CategoryItem('Auto-saves', 'auto'));
             }
+            categories.forEach(c => this.parentMap.set(c, undefined));
             return categories;
         }
 
@@ -188,15 +195,19 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
                 ? snapshots.filter(s => !s.autoSave)
                 : snapshots.filter(s => s.autoSave);
 
-            return filtered
+            const items = filtered
                 .reverse()
                 .map((snap, index) => new SnapshotItem(snap.id, snap, index === 0));
+            items.forEach(i => this.parentMap.set(i, element));
+            return items;
         }
 
         if (element instanceof SnapshotItem) {
             const files = element.snapshot.files || [];
             const tree = buildFolderTree(files);
-            return getCompactedChildren(tree, '', element.snapshotId, this.workspaceRoot);
+            const children = getCompactedChildren(tree, '', element.snapshotId, this.workspaceRoot);
+            children.forEach(c => this.parentMap.set(c, element));
+            return children;
         }
 
         if (element instanceof FolderItem) {
@@ -266,6 +277,7 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
                 nodes.push(new FileItem(filePath, element.snapshotId, element.workspaceRoot));
             }
 
+            nodes.forEach(n => this.parentMap.set(n, element));
             return nodes;
         }
 
