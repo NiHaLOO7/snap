@@ -185,16 +185,28 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }),
 
-        vscode.commands.registerCommand('snap.saveFile', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showErrorMessage('No active file to save');
-                return;
+        vscode.commands.registerCommand('snap.saveFile', async (_uri?: vscode.Uri, uris?: vscode.Uri[]) => {
+            let filePaths: string[] = [];
+
+            if (uris && uris.length > 0) {
+                // Called from explorer context menu with multi-select
+                filePaths = uris.map(u => path.relative(workspaceRoot, u.fsPath));
+            } else if (_uri) {
+                // Single file from explorer
+                filePaths = [path.relative(workspaceRoot, _uri.fsPath)];
+            } else {
+                // Called from editor context menu or command palette
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    vscode.window.showErrorMessage('No active file to save');
+                    return;
+                }
+                filePaths = [path.relative(workspaceRoot, editor.document.uri.fsPath)];
             }
 
-            const filePath = path.relative(workspaceRoot, editor.document.uri.fsPath);
+            const label = filePaths.length === 1 ? filePaths[0] : `${filePaths.length} files`;
             const message = await vscode.window.showInputBox({
-                prompt: `Save checkpoint for ${filePath}`,
+                prompt: `Save checkpoint for ${label}`,
                 placeHolder: 'e.g., before changes',
             });
 
@@ -202,10 +214,10 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
             }
 
-            const args = ['save-file', filePath, message || 'file checkpoint'];
+            const args = ['save-file', ...filePaths, '-m', message || 'file checkpoint'];
             const result = await execSnap(workspaceRoot, args);
             if (result.success) {
-                vscode.window.showInformationMessage(`Saved file checkpoint: ${filePath}`);
+                vscode.window.showInformationMessage(`Saved checkpoint: ${label}`);
                 snapProvider.refresh();
             } else {
                 vscode.window.showErrorMessage(`Save failed: ${result.error}`);

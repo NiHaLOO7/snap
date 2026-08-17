@@ -112,6 +112,12 @@
           "group": "snap@1"
         }
       ],
+      "explorer/context": [
+        {
+          "command": "snap.saveFile",
+          "group": "snap@1"
+        }
+      ],
       "view/item/context": [
         {
           "command": "snap.restore",

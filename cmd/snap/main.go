@@ -873,40 +873,66 @@ func cmdSaveFile() {
 	_ = requireInit()
 
 	if len(os.Args) < 3 {
-		fatal("usage: snap save-file <file> [message]")
+		fatal("usage: snap save-file <file1> [file2...] [-m message]")
 	}
 
-	filePath := os.Args[2]
+	// Parse args: files and optional -m message
+	var files []string
 	message := "file checkpoint"
-	if len(os.Args) > 3 {
-		message = strings.Join(os.Args[3:], " ")
+
+	for i := 2; i < len(os.Args); i++ {
+		if (os.Args[i] == "-m" || os.Args[i] == "--message") && i+1 < len(os.Args) {
+			message = strings.Join(os.Args[i+1:], " ")
+			break
+		}
+		files = append(files, os.Args[i])
+	}
+
+	if len(files) == 0 {
+		fatal("usage: snap save-file <file1> [file2...] [-m message]")
 	}
 
 	root, _ := os.Getwd()
 	snapPath := filepath.Join(root, ".snap")
 	objStore := store.New(snapPath)
 
-	fullPath := filepath.Join(root, filePath)
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		fatal("read file: %v", err)
-	}
+	tree := make(map[string]string)
+	for _, filePath := range files {
+		fullPath := filepath.Join(root, filePath)
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			fatal("read file %s: %v", filePath, err)
+		}
 
-	hash, err := objStore.Write(data)
-	if err != nil {
-		fatal("store file: %v", err)
+		hash, err := objStore.Write(data)
+		if err != nil {
+			fatal("store file %s: %v", filePath, err)
+		}
+		tree[filePath] = hash
 	}
 
 	engine := snapshot.NewEngine(root)
-	tree := map[string]string{filePath: hash}
 
-	snap, err := engine.SaveSingleFile(filePath, message, tree)
+	// Use first file name for single, or "N files" for multi
+	label := files[0]
+	if len(files) > 1 {
+		label = fmt.Sprintf("%d files", len(files))
+	}
+
+	snap, err := engine.SaveSingleFileWithAutoSave(label, message, tree, false)
 	if err != nil {
 		fatal("save: %v", err)
 	}
 
 	fmt.Printf("Saved file checkpoint #%d\n", snap.ID)
-	fmt.Printf("  File:     %s\n", filePath)
+	if len(files) == 1 {
+		fmt.Printf("  File:     %s\n", files[0])
+	} else {
+		fmt.Printf("  Files:    %d\n", len(files))
+		for _, f := range files {
+			fmt.Printf("            %s\n", f)
+		}
+	}
 	fmt.Printf("  Message:  %s\n", message)
 }
 
