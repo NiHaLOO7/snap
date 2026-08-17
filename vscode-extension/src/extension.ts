@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { SnapProvider, SnapshotItem, FileItem } from './snapProvider';
+import { SnapProvider, SnapDecorationProvider, SnapshotItem, FileItem } from './snapProvider';
 import { ChangesProvider } from './changesProvider';
 import { execSnap } from './snapCli';
 
@@ -25,11 +25,13 @@ export function activate(context: vscode.ExtensionContext) {
     const snapProvider = new SnapProvider(workspaceRoot);
     const changesProvider = new ChangesProvider(workspaceRoot);
     const contentProvider = new SnapContentProvider();
+    const decorationProvider = new SnapDecorationProvider();
 
     const treeView = vscode.window.createTreeView('snapTimeline', {
         treeDataProvider: snapProvider,
     });
     context.subscriptions.push(treeView);
+    context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorationProvider));
     vscode.window.registerTreeDataProvider('snapChanges', changesProvider);
 
     context.subscriptions.push(
@@ -265,6 +267,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('snap.refresh', () => {
             snapProvider.refresh();
             changesProvider.refresh();
+            decorationProvider.refresh();
         })
     );
 

@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { getSnapshots, SnapshotInfo } from './snapCli';
 import * as path from 'path';
 
@@ -57,11 +59,23 @@ export class FolderItem extends vscode.TreeItem {
         public readonly snapshotId: number,
         public readonly files: string[],
         public readonly workspaceRoot: string,
+        public readonly snapshotTree: Record<string, string>,
     ) {
         super(folderName, vscode.TreeItemCollapsibleState.Collapsed);
-        this.iconPath = new vscode.ThemeIcon('folder');
         this.tooltip = `${folderPath} (${files.length} files)`;
         this.contextValue = 'snapshotFolder';
+
+        // Determine folder status based on contained files
+        const status = getFolderStatus(files, workspaceRoot, snapshotTree);
+        this.resourceUri = vscode.Uri.parse(`snap-tree://folder/${snapshotId}/${folderPath}?status=${status}`);
+
+        if (status === 'deleted') {
+            this.iconPath = new vscode.ThemeIcon('folder', new vscode.ThemeColor('list.errorForeground'));
+        } else if (status === 'modified') {
+            this.iconPath = new vscode.ThemeIcon('folder', new vscode.ThemeColor('list.warningForeground'));
+        } else {
+            this.iconPath = new vscode.ThemeIcon('folder');
+        }
     }
 }
 
@@ -70,14 +84,28 @@ export class FileItem extends vscode.TreeItem {
         public readonly filePath: string,
         public readonly snapshotId: number,
         public readonly workspaceRoot: string,
+        public readonly snapshotHash: string,
     ) {
         const fileName = path.basename(filePath);
         super(fileName, vscode.TreeItemCollapsibleState.None);
 
-        this.iconPath = new vscode.ThemeIcon('file');
         this.tooltip = `${filePath}\nClick to diff with current • Right-click for more`;
-        this.description = '';
         this.contextValue = 'snapshotFile';
+
+        // Determine file status
+        const status = getFileStatus(filePath, workspaceRoot, snapshotHash);
+        this.resourceUri = vscode.Uri.parse(`snap-tree://file/${snapshotId}/${filePath}?status=${status}`);
+
+        if (status === 'deleted') {
+            this.iconPath = new vscode.ThemeIcon('file', new vscode.ThemeColor('list.errorForeground'));
+            this.description = 'D';
+        } else if (status === 'modified') {
+            this.iconPath = new vscode.ThemeIcon('file', new vscode.ThemeColor('list.warningForeground'));
+            this.description = 'M';
+        } else {
+            this.iconPath = new vscode.ThemeIcon('file');
+            this.description = '';
+        }
 
         this.command = {
             command: 'snap.diffFile',
@@ -85,6 +113,49 @@ export class FileItem extends vscode.TreeItem {
             arguments: [this],
         };
     }
+}
+
+function getFileStatus(filePath: string, workspaceRoot: string, snapshotHash: string): 'same' | 'modified' | 'deleted' {
+    const fullPath = path.join(workspaceRoot, filePath);
+    if (!fs.existsSync(fullPath)) {
+        return 'deleted';
+    }
+
+    try {
+        const data = fs.readFileSync(fullPath);
+        const currentHash = crypto.createHash('sha256').update(data).digest('hex');
+        if (currentHash !== snapshotHash) {
+            return 'modified';
+        }
+    } catch {
+        return 'deleted';
+    }
+
+    return 'same';
+}
+
+function getFolderStatus(files: string[], workspaceRoot: string, snapshotTree: Record<string, string>): 'same' | 'modified' | 'deleted' {
+    let allDeleted = true;
+    let hasChanges = false;
+
+    for (const filePath of files) {
+        const hash = snapshotTree[filePath] || '';
+        const status = getFileStatus(filePath, workspaceRoot, hash);
+        if (status !== 'deleted') {
+            allDeleted = false;
+        }
+        if (status !== 'same') {
+            hasChanges = true;
+        }
+    }
+
+    if (allDeleted) {
+        return 'deleted';
+    }
+    if (hasChanges) {
+        return 'modified';
+    }
+    return 'same';
 }
 
 type TreeNode = CategoryItem | SnapshotItem | FolderItem | FileItem;
@@ -123,8 +194,7 @@ function collectAllFiles(tree: FolderTree): string[] {
     return result;
 }
 
-// Collapse single-child folders: a/b/c with only one subfolder becomes "a/b/c"
-function getCompactedChildren(tree: FolderTree, prefix: string, snapshotId: number, workspaceRoot: string): TreeNode[] {
+function getCompactedChildren(tree: FolderTree, prefix: string, snapshotId: number, workspaceRoot: string, snapshotTree: Record<string, string>): TreeNode[] {
     const nodes: TreeNode[] = [];
 
     for (const [name, subtree] of tree.subfolders) {
@@ -132,7 +202,6 @@ function getCompactedChildren(tree: FolderTree, prefix: string, snapshotId: numb
         let currentPath = prefix ? `${prefix}/${name}` : name;
         let current = subtree;
 
-        // Compact: if folder has only subfolders (no direct files) and exactly 1 subfolder, merge
         while (current.files.length === 0 && current.subfolders.size === 1) {
             const [childName, childTree] = current.subfolders.entries().next().value!;
             displayName = `${displayName}/${childName}`;
@@ -141,15 +210,51 @@ function getCompactedChildren(tree: FolderTree, prefix: string, snapshotId: numb
         }
 
         const allFiles = collectAllFiles(current);
-        nodes.push(new FolderItem(displayName, currentPath, snapshotId, allFiles, workspaceRoot));
+        nodes.push(new FolderItem(displayName, currentPath, snapshotId, allFiles, workspaceRoot, snapshotTree));
     }
 
-    // Direct files in this folder
     for (const filePath of tree.files) {
-        nodes.push(new FileItem(filePath, snapshotId, workspaceRoot));
+        const hash = snapshotTree[filePath] || '';
+        nodes.push(new FileItem(filePath, snapshotId, workspaceRoot, hash));
     }
 
     return nodes;
+}
+
+export class SnapDecorationProvider implements vscode.FileDecorationProvider {
+    private _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
+    readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
+
+    provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
+        if (uri.scheme !== 'snap-tree') {
+            return undefined;
+        }
+
+        const params = new URLSearchParams(uri.query);
+        const status = params.get('status');
+
+        if (status === 'deleted') {
+            return {
+                badge: 'D',
+                color: new vscode.ThemeColor('list.errorForeground'),
+                tooltip: 'Deleted from current directory',
+            };
+        }
+
+        if (status === 'modified') {
+            return {
+                badge: 'M',
+                color: new vscode.ThemeColor('list.warningForeground'),
+                tooltip: 'Modified since this snapshot',
+            };
+        }
+
+        return undefined;
+    }
+
+    refresh(): void {
+        this._onDidChangeFileDecorations.fire(undefined);
+    }
 }
 
 export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
@@ -204,14 +309,14 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
 
         if (element instanceof SnapshotItem) {
             const files = element.snapshot.files || [];
+            const snapshotTree = element.snapshot.tree || {};
             const tree = buildFolderTree(files);
-            const children = getCompactedChildren(tree, '', element.snapshotId, this.workspaceRoot);
+            const children = getCompactedChildren(tree, '', element.snapshotId, this.workspaceRoot, snapshotTree);
             children.forEach(c => this.parentMap.set(c, element));
             return children;
         }
 
         if (element instanceof FolderItem) {
-            // Build subtree for this folder's files
             const folderPrefix = element.folderPath;
             const directFiles: string[] = [];
             const subfolders = new Map<string, string[]>();
@@ -233,13 +338,11 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
 
             const nodes: TreeNode[] = [];
 
-            // Sub-folders (with compaction)
             for (const [name, files] of subfolders) {
                 let displayName = name;
                 let currentPath = `${folderPrefix}/${name}`;
                 let currentFiles = files;
 
-                // Compact single-child folders
                 while (true) {
                     const prefix2 = currentPath;
                     const directInThis: string[] = [];
@@ -269,12 +372,12 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
                     }
                 }
 
-                nodes.push(new FolderItem(displayName, currentPath, element.snapshotId, currentFiles, element.workspaceRoot));
+                nodes.push(new FolderItem(displayName, currentPath, element.snapshotId, currentFiles, element.workspaceRoot, element.snapshotTree));
             }
 
-            // Direct files
             for (const filePath of directFiles) {
-                nodes.push(new FileItem(filePath, element.snapshotId, element.workspaceRoot));
+                const hash = element.snapshotTree[filePath] || '';
+                nodes.push(new FileItem(filePath, element.snapshotId, element.workspaceRoot, hash));
             }
 
             nodes.forEach(n => this.parentMap.set(n, element));
