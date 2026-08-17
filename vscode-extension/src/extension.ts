@@ -112,6 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(`Restored to #${id}`);
                 snapProvider.refresh();
                 changesProvider.refresh();
+                decorationProvider.refresh();
             } else {
                 vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
             }
@@ -185,6 +186,8 @@ export function activate(context: vscode.ExtensionContext) {
             const result = await execSnap(workspaceRoot, ['restore-file', item.snapshotId.toString(), item.filePath]);
             if (result.success) {
                 vscode.window.showInformationMessage(`Restored ${item.filePath} from #${item.snapshotId}`);
+                snapProvider.refresh();
+                decorationProvider.refresh();
             } else {
                 vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
             }
@@ -280,6 +283,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
         debounceTimer = setTimeout(() => {
             changesProvider.refresh();
+            snapProvider.refresh();
+            decorationProvider.refresh();
         }, 2000);
     };
 
