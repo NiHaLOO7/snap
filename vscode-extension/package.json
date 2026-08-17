@@ -70,6 +70,16 @@
         "command": "snap.refresh",
         "title": "Snap: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "snap.pin",
+        "title": "Snap: Pin Checkpoint",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "snap.unpin",
+        "title": "Snap: Unpin Checkpoint",
+        "icon": "$(pinned)"
       }
     ],
     "viewsContainers": {
@@ -120,14 +130,39 @@
       ],
       "view/item/context": [
         {
-          "command": "snap.restore",
+          "command": "snap.pin",
           "when": "viewItem == snapshot",
           "group": "inline@1"
         },
         {
-          "command": "snap.delete",
+          "command": "snap.restore",
           "when": "viewItem == snapshot",
           "group": "inline@2"
+        },
+        {
+          "command": "snap.delete",
+          "when": "viewItem == snapshot",
+          "group": "inline@3"
+        },
+        {
+          "command": "snap.unpin",
+          "when": "viewItem == snapshotPinned",
+          "group": "inline@1"
+        },
+        {
+          "command": "snap.restore",
+          "when": "viewItem == snapshotPinned",
+          "group": "inline@2"
+        },
+        {
+          "command": "snap.delete",
+          "when": "viewItem == snapshotPinned",
+          "group": "inline@3"
+        },
+        {
+          "command": "snap.pin",
+          "when": "viewItem == snapshot",
+          "group": "1_actions"
         },
         {
           "command": "snap.restore",
@@ -137,6 +172,21 @@
         {
           "command": "snap.delete",
           "when": "viewItem == snapshot",
+          "group": "2_delete"
+        },
+        {
+          "command": "snap.unpin",
+          "when": "viewItem == snapshotPinned",
+          "group": "1_actions"
+        },
+        {
+          "command": "snap.restore",
+          "when": "viewItem == snapshotPinned",
+          "group": "1_actions"
+        },
+        {
+          "command": "snap.delete",
+          "when": "viewItem == snapshotPinned",
           "group": "2_delete"
         },
         {

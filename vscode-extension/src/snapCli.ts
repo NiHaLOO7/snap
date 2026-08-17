@@ -33,6 +33,7 @@ export interface SnapshotInfo {
     timestamp: string;
     fileCount: number;
     autoSave: boolean;
+    pinned: boolean;
     files: string[];
     tree: Record<string, string>;
 }
@@ -63,6 +64,7 @@ export async function getSnapshots(workspaceRoot: string): Promise<SnapshotInfo[
             timestamp: data.timestamp,
             fileCount: data.file_count,
             autoSave: data.auto_save || false,
+            pinned: data.pinned || false,
             files,
             tree: data.tree || {},
         });

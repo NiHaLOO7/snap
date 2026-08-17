@@ -7,13 +7,17 @@ import * as path from 'path';
 export class CategoryItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
-        public readonly category: 'user' | 'auto',
+        public readonly category: 'pinned' | 'user' | 'auto',
     ) {
         super(label, vscode.TreeItemCollapsibleState.Expanded);
         this.contextValue = 'category';
-        this.iconPath = category === 'user'
-            ? new vscode.ThemeIcon('bookmark')
-            : new vscode.ThemeIcon('history');
+        if (category === 'pinned') {
+            this.iconPath = new vscode.ThemeIcon('pinned');
+        } else if (category === 'user') {
+            this.iconPath = new vscode.ThemeIcon('bookmark');
+        } else {
+            this.iconPath = new vscode.ThemeIcon('history');
+        }
     }
 }
 
@@ -40,7 +44,9 @@ export class SnapshotItem extends vscode.TreeItem {
         this.description = `${timeStr} • ${snapshot.fileCount} files`;
         this.tooltip = `Snapshot #${snapshot.id}\n${snapshot.message}${descPart}\n${timeStr}\n${snapshot.fileCount} files${snapshot.autoSave ? '\n[auto-save]' : ''}`;
 
-        if (isLatest) {
+        if (snapshot.pinned) {
+            this.iconPath = new vscode.ThemeIcon('pinned');
+        } else if (isLatest) {
             this.iconPath = new vscode.ThemeIcon('circle-large-filled');
         } else if (snapshot.autoSave) {
             this.iconPath = new vscode.ThemeIcon('circle-small');
@@ -48,7 +54,7 @@ export class SnapshotItem extends vscode.TreeItem {
             this.iconPath = new vscode.ThemeIcon('circle-large-outline');
         }
 
-        this.contextValue = 'snapshot';
+        this.contextValue = snapshot.pinned ? 'snapshotPinned' : 'snapshot';
     }
 }
 
@@ -313,10 +319,14 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
     async getChildren(element?: TreeNode): Promise<TreeNode[]> {
         if (!element) {
             const snapshots = await getSnapshots(this.workspaceRoot);
-            const hasUser = snapshots.some(s => !s.autoSave);
-            const hasAuto = snapshots.some(s => s.autoSave);
+            const hasPinned = snapshots.some(s => s.pinned);
+            const hasUser = snapshots.some(s => !s.autoSave && !s.pinned);
+            const hasAuto = snapshots.some(s => s.autoSave && !s.pinned);
 
             const categories: TreeNode[] = [];
+            if (hasPinned) {
+                categories.push(new CategoryItem('Pinned', 'pinned'));
+            }
             if (hasUser) {
                 categories.push(new CategoryItem('Checkpoints', 'user'));
             }
@@ -329,9 +339,15 @@ export class SnapProvider implements vscode.TreeDataProvider<TreeNode> {
 
         if (element instanceof CategoryItem) {
             const snapshots = await getSnapshots(this.workspaceRoot);
-            const filtered = element.category === 'user'
-                ? snapshots.filter(s => !s.autoSave)
-                : snapshots.filter(s => s.autoSave);
+            let filtered: SnapshotInfo[];
+
+            if (element.category === 'pinned') {
+                filtered = snapshots.filter(s => s.pinned);
+            } else if (element.category === 'user') {
+                filtered = snapshots.filter(s => !s.autoSave && !s.pinned);
+            } else {
+                filtered = snapshots.filter(s => s.autoSave && !s.pinned);
+            }
 
             const items = filtered
                 .reverse()

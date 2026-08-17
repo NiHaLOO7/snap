@@ -272,8 +272,33 @@ export function activate(context: vscode.ExtensionContext) {
             if (result.success) {
                 vscode.window.showInformationMessage(`Deleted #${id}`);
                 snapProvider.refresh();
+                refreshDecorationData();
             } else {
                 vscode.window.showErrorMessage(`Delete failed: ${result.error}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.pin', async (item?: SnapshotItem) => {
+            if (!item) { return; }
+            const result = await execSnap(workspaceRoot, ['pin', item.snapshotId.toString()]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Pinned #${item.snapshotId}`);
+                snapProvider.refresh();
+                refreshDecorationData();
+            } else {
+                vscode.window.showErrorMessage(`Pin failed: ${result.error}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.unpin', async (item?: SnapshotItem) => {
+            if (!item) { return; }
+            const result = await execSnap(workspaceRoot, ['unpin', item.snapshotId.toString()]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Unpinned #${item.snapshotId}`);
+                snapProvider.refresh();
+                refreshDecorationData();
+            } else {
+                vscode.window.showErrorMessage(`Unpin failed: ${result.error}`);
             }
         }),
 
