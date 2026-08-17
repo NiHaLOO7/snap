@@ -26,6 +26,16 @@ export function activate(context: vscode.ExtensionContext) {
     const changesProvider = new ChangesProvider(workspaceRoot);
     const contentProvider = new SnapContentProvider();
     const decorationProvider = new SnapDecorationProvider();
+    decorationProvider.setWorkspaceRoot(workspaceRoot);
+
+    // Load snapshot trees for decoration provider
+    const refreshDecorationData = async () => {
+        const { getSnapshots } = await import('./snapCli');
+        const snapshots = await getSnapshots(workspaceRoot);
+        decorationProvider.updateSnapshotTrees(snapshots);
+        decorationProvider.refresh();
+    };
+    refreshDecorationData();
 
     const treeView = vscode.window.createTreeView('snapTimeline', {
         treeDataProvider: snapProvider,
@@ -112,7 +122,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(`Restored to #${id}`);
                 snapProvider.refresh();
                 changesProvider.refresh();
-                decorationProvider.refresh();
+                refreshDecorationData();
             } else {
                 vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
             }
@@ -187,7 +197,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (result.success) {
                 vscode.window.showInformationMessage(`Restored ${item.filePath} from #${item.snapshotId}`);
                 snapProvider.refresh();
-                decorationProvider.refresh();
+                refreshDecorationData();
             } else {
                 vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
             }
@@ -270,7 +280,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('snap.refresh', () => {
             snapProvider.refresh();
             changesProvider.refresh();
-            decorationProvider.refresh();
+            refreshDecorationData();
         })
     );
 
@@ -283,7 +293,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
         debounceTimer = setTimeout(() => {
             changesProvider.refresh();
-            snapProvider.refresh();
             decorationProvider.refresh();
         }, 2000);
     };

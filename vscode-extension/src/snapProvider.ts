@@ -64,18 +64,11 @@ export class FolderItem extends vscode.TreeItem {
         super(folderName, vscode.TreeItemCollapsibleState.Collapsed);
         this.tooltip = `${folderPath} (${files.length} files)`;
         this.contextValue = 'snapshotFolder';
+        this.iconPath = new vscode.ThemeIcon('folder');
 
-        // Determine folder status based on contained files
-        const status = getFolderStatus(files, workspaceRoot, snapshotTree);
-        this.resourceUri = vscode.Uri.parse(`snap-tree://folder/${snapshotId}/${folderPath}?status=${status}`);
-
-        if (status === 'deleted') {
-            this.iconPath = new vscode.ThemeIcon('folder', new vscode.ThemeColor('list.errorForeground'));
-        } else if (status === 'modified') {
-            this.iconPath = new vscode.ThemeIcon('folder', new vscode.ThemeColor('list.warningForeground'));
-        } else {
-            this.iconPath = new vscode.ThemeIcon('folder');
-        }
+        // Encode folder info in resourceUri for decoration provider
+        const encodedFiles = encodeURIComponent(JSON.stringify(files));
+        this.resourceUri = vscode.Uri.parse(`snap-tree://folder/${snapshotId}/${folderPath}?files=${encodedFiles}`);
     }
 }
 
@@ -89,23 +82,12 @@ export class FileItem extends vscode.TreeItem {
         const fileName = path.basename(filePath);
         super(fileName, vscode.TreeItemCollapsibleState.None);
 
+        this.iconPath = new vscode.ThemeIcon('file');
         this.tooltip = `${filePath}\nClick to diff with current • Right-click for more`;
         this.contextValue = 'snapshotFile';
 
-        // Determine file status
-        const status = getFileStatus(filePath, workspaceRoot, snapshotHash);
-        this.resourceUri = vscode.Uri.parse(`snap-tree://file/${snapshotId}/${filePath}?status=${status}`);
-
-        if (status === 'deleted') {
-            this.iconPath = new vscode.ThemeIcon('file', new vscode.ThemeColor('list.errorForeground'));
-            this.description = 'D';
-        } else if (status === 'modified') {
-            this.iconPath = new vscode.ThemeIcon('file', new vscode.ThemeColor('list.warningForeground'));
-            this.description = 'M';
-        } else {
-            this.iconPath = new vscode.ThemeIcon('file');
-            this.description = '';
-        }
+        // Encode hash in resourceUri for decoration provider to compute live status
+        this.resourceUri = vscode.Uri.parse(`snap-tree://file/${snapshotId}/${filePath}?hash=${snapshotHash}`);
 
         this.command = {
             command: 'snap.diffFile',
@@ -115,47 +97,8 @@ export class FileItem extends vscode.TreeItem {
     }
 }
 
-function getFileStatus(filePath: string, workspaceRoot: string, snapshotHash: string): 'same' | 'modified' | 'deleted' {
-    const fullPath = path.join(workspaceRoot, filePath);
-    if (!fs.existsSync(fullPath)) {
-        return 'deleted';
-    }
-
-    try {
-        const data = fs.readFileSync(fullPath);
-        const currentHash = crypto.createHash('sha256').update(data).digest('hex');
-        if (currentHash !== snapshotHash) {
-            return 'modified';
-        }
-    } catch {
-        return 'deleted';
-    }
-
-    return 'same';
-}
-
-function getFolderStatus(files: string[], workspaceRoot: string, snapshotTree: Record<string, string>): 'same' | 'modified' | 'deleted' {
-    let allDeleted = true;
-    let hasChanges = false;
-
-    for (const filePath of files) {
-        const hash = snapshotTree[filePath] || '';
-        const status = getFileStatus(filePath, workspaceRoot, hash);
-        if (status !== 'deleted') {
-            allDeleted = false;
-        }
-        if (status !== 'same') {
-            hasChanges = true;
-        }
-    }
-
-    if (allDeleted) {
-        return 'deleted';
-    }
-    if (hasChanges) {
-        return 'modified';
-    }
-    return 'same';
+function encodeURIComponent(str: string): string {
+    return globalThis.encodeURIComponent(str);
 }
 
 type TreeNode = CategoryItem | SnapshotItem | FolderItem | FileItem;
@@ -224,32 +167,122 @@ function getCompactedChildren(tree: FolderTree, prefix: string, snapshotId: numb
 export class SnapDecorationProvider implements vscode.FileDecorationProvider {
     private _onDidChangeFileDecorations = new vscode.EventEmitter<vscode.Uri | vscode.Uri[] | undefined>();
     readonly onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
+    private workspaceRoot: string = '';
+    private snapshotTrees = new Map<number, Record<string, string>>();
+
+    setWorkspaceRoot(root: string): void {
+        this.workspaceRoot = root;
+    }
+
+    updateSnapshotTrees(snapshots: SnapshotInfo[]): void {
+        this.snapshotTrees.clear();
+        for (const snap of snapshots) {
+            this.snapshotTrees.set(snap.id, snap.tree);
+        }
+    }
 
     provideFileDecoration(uri: vscode.Uri): vscode.FileDecoration | undefined {
         if (uri.scheme !== 'snap-tree') {
             return undefined;
         }
 
-        const params = new URLSearchParams(uri.query);
-        const status = params.get('status');
+        if (uri.authority === 'file') {
+            const params = new URLSearchParams(uri.query);
+            const snapshotHash = params.get('hash') || '';
+            // Path format: /snapshotId/file/path
+            const pathParts = uri.path.substring(1); // remove leading /
+            const slashIdx = pathParts.indexOf('/');
+            const filePath = pathParts.substring(slashIdx + 1);
 
-        if (status === 'deleted') {
-            return {
-                badge: 'D',
-                color: new vscode.ThemeColor('list.errorForeground'),
-                tooltip: 'Deleted from current directory',
-            };
+            const status = this.computeFileStatus(filePath, snapshotHash);
+
+            if (status === 'deleted') {
+                return {
+                    badge: 'D',
+                    color: new vscode.ThemeColor('list.errorForeground'),
+                    tooltip: 'Deleted from current directory',
+                };
+            }
+            if (status === 'modified') {
+                return {
+                    badge: 'M',
+                    color: new vscode.ThemeColor('list.warningForeground'),
+                    tooltip: 'Modified since this snapshot',
+                };
+            }
+            return undefined;
         }
 
-        if (status === 'modified') {
-            return {
-                badge: 'M',
-                color: new vscode.ThemeColor('list.warningForeground'),
-                tooltip: 'Modified since this snapshot',
-            };
+        if (uri.authority === 'folder') {
+            const params = new URLSearchParams(uri.query);
+            let files: string[] = [];
+            try {
+                files = JSON.parse(decodeURIComponent(params.get('files') || '[]'));
+            } catch {
+                return undefined;
+            }
+
+            const pathParts = uri.path.substring(1);
+            const slashIdx = pathParts.indexOf('/');
+            const snapshotIdStr = pathParts.substring(0, slashIdx);
+            const snapshotId = parseInt(snapshotIdStr, 10);
+            const tree = this.snapshotTrees.get(snapshotId) || {};
+
+            const status = this.computeFolderStatus(files, tree);
+
+            if (status === 'deleted') {
+                return {
+                    badge: 'D',
+                    color: new vscode.ThemeColor('list.errorForeground'),
+                    tooltip: 'All files deleted from current directory',
+                };
+            }
+            if (status === 'modified') {
+                return {
+                    badge: 'M',
+                    color: new vscode.ThemeColor('list.warningForeground'),
+                    tooltip: 'Contains modified or deleted files',
+                };
+            }
+            return undefined;
         }
 
         return undefined;
+    }
+
+    private computeFileStatus(filePath: string, snapshotHash: string): 'same' | 'modified' | 'deleted' {
+        const fullPath = path.join(this.workspaceRoot, filePath);
+        try {
+            if (!fs.existsSync(fullPath)) {
+                return 'deleted';
+            }
+            const data = fs.readFileSync(fullPath);
+            const currentHash = crypto.createHash('sha256').update(data).digest('hex');
+            return currentHash !== snapshotHash ? 'modified' : 'same';
+        } catch {
+            return 'deleted';
+        }
+    }
+
+    private computeFolderStatus(files: string[], tree: Record<string, string>): 'same' | 'modified' | 'deleted' {
+        let allDeleted = true;
+        let hasChanges = false;
+
+        for (const filePath of files) {
+            const hash = tree[filePath] || '';
+            const status = this.computeFileStatus(filePath, hash);
+            if (status !== 'deleted') {
+                allDeleted = false;
+            }
+            if (status !== 'same') {
+                hasChanges = true;
+            }
+        }
+
+        if (allDeleted && files.length > 0) {
+            return 'deleted';
+        }
+        return hasChanges ? 'modified' : 'same';
     }
 
     refresh(): void {
