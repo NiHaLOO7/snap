@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { SnapProvider, SnapshotItem, FolderItem, FileItem } from './snapProvider';
+import { SnapProvider, SnapshotItem, FileItem } from './snapProvider';
 import { ChangesProvider } from './changesProvider';
 import { execSnap } from './snapCli';
 
@@ -260,16 +260,6 @@ export function activate(context: vscode.ExtensionContext) {
             } else {
                 vscode.window.showErrorMessage(`Delete failed: ${result.error}`);
             }
-        }),
-
-        vscode.commands.registerCommand('snap.expandSnapshot', async (item?: SnapshotItem) => {
-            if (!item) {
-                return;
-            }
-
-            // Toggle: if currently collapsed, expand all; VS Code handles expand depth
-            // reveal with expand: 10 expands deeply
-            await treeView.reveal(item, { expand: 10, select: false, focus: false });
         }),
 
         vscode.commands.registerCommand('snap.refresh', () => {
