@@ -4,6 +4,8 @@ A fast, local checkpoint tool for developers. Save your project state instantly,
 
 Built for the AI-assisted development workflow where you make experimental changes, hand control to agents, and need a safety net that's faster than `git commit`.
 
+![Snap Extension — File decorations showing Modified (M) and Deleted (D) status](.assets/file-decorations.jpg)
+
 ```
 ┌─────────────────────────────────────────────────┐
 │              Your Development Flow               │
@@ -116,9 +118,13 @@ This is where Snap really shines. When you initialize Snap in a project:
 
 **3. The agent checkpoints for you** — Because the agent reads the instruction file, it will proactively run `snap save "before: auth refactor"` before starting work and `snap save "after: auth refactor"` when done. You get a clean timeline of what the agent did and when — without lifting a finger.
 
+![AI agent automatically saving checkpoints before and after changes](.assets/agent-before-after.jpg)
+
 **4. Agent activity detection** — When recording is active, Snap auto-detects when an AI agent makes changes (multiple files changing within seconds) and tags those entries in the timeline as `[agent]`. So you can always tell "this is what I changed" vs "this is what the agent changed."
 
 The result: you hand control to an AI agent with full confidence. If it goes wrong, you have complete recovery options — from a full project restore to surgical single-file rollback. Zero trust required.
+
+![Agent creates before/after checkpoints — clean timeline of what changed](.assets/agent-result.jpg)
 
 ### Claude Code Hook (Auto-save before edits)
 
@@ -321,6 +327,8 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 
 **1. Save a checkpoint:** Click the save icon at the top of Timeline → type a message like "before refactoring auth" → optionally add a description → your entire project state is saved.
 
+![Save checkpoint dialog](.assets/save-dialog.png)
+
 **2. Make changes** — code yourself or let an AI agent work...
 
 **3. Check what's different:** Look at the Changes panel to see what's been modified since your last save.
@@ -333,7 +341,11 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 - Folders also show colored status — yellow if they contain modified files, red if all files inside are deleted
 - Status updates automatically as you edit files — no manual refresh needed
 
+![File status decorations — M for modified, D for deleted, colored folders](.assets/file-view.png)
+
 **6. Diff a file:** Click any file inside a checkpoint → side-by-side diff opens (snapshot on left, current on right). Full syntax highlighting and word-level change detection — same quality as VS Code's built-in Git diff.
+
+![Side-by-side diff view — snapshot vs current with highlighted changes](.assets/diff-view.jpg)
 
 **7. View file content:** Right-click a file inside a checkpoint → "Show File" to view that file's content at that point in time (read-only).
 
@@ -342,6 +354,8 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 **9. Restore single file:** Click the restore icon on a specific file inside any checkpoint. Only that file gets restored — everything else stays as-is.
 
 **10. Save specific files:** Right-click one or multiple files in the VS Code Explorer → "Snap: Save This File". Saves just those files as a checkpoint. Also works from the editor right-click menu for the currently open file.
+
+![Agent reading CLAUDE.md and auto-saving before edits](.assets/agent-auto-save.png)
 
 **11. Pin/Unpin:** Click the pin icon on any checkpoint to pin it. It moves to the "Pinned" section at the top and will never be auto-deleted. Click the unpin icon to move it back to its original category.
 
