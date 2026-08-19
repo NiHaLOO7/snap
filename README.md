@@ -35,44 +35,191 @@ Built for the AI-assisted development workflow where you make experimental chang
 
 ## Table of Contents
 
-- [Why Snap?](#why-snap)
+- [Why Snap Over Git?](#why-snap-over-git-for-experiments)
+- [How It Saves Time](#how-it-saves-time)
+- [Mix and Match Restores](#mix-and-match--restore-different-files-from-different-checkpoints)
+- [AI Agent Integration](#ai-agents-automatically-use-it)
+- [All Features](#all-features)
 - [Installation](#installation)
-  - [CLI Installation](#cli-installation)
-  - [VS Code Extension](#vs-code-extension-installation)
-- [Quick Start](#quick-start)
-- [CLI Commands](#cli-commands)
-- [VS Code Extension](#vs-code-extension)
+  - [CLI Installation](#step-1--install-the-cli)
+  - [VS Code Extension](#step-2--install-the-vs-code-extension)
+- [Using the VS Code Extension](#using-the-vs-code-extension)
+- [CLI Quick Reference](#cli-quick-reference)
+- [CLI Commands (Detailed)](#cli-commands-detailed)
 - [Storage Design](#storage-design)
 - [.snapignore](#snapignore)
 - [Build from Source](#build-from-source)
 - [Architecture](#architecture)
+- [Roadmap](#roadmap)
 
 ---
 
-## Why Snap?
+## Why Snap Over Git for Experiments?
 
 Git is great for publishing code. But between commits, your code is unprotected.
 
-| Problem | Snap Solution |
-|---------|---------------|
-| Agent changes 20 files, something breaks | `snap restore` — back to safety in 1 second |
-| Agent "reverts" but misses 3 files | Every save is a complete project snapshot |
-| Experimenting and want to compare states | `snap diff 3 7` — any two points |
-| Don't want to pollute Git history | Snap is completely separate from Git |
-| Lost track of what changed | `snap status` — instant overview |
-| Don't know which checkpoint to restore | `snap show 3 src/main.go` — view file at any point |
+| Situation | With Git | With Snap |
+|-----------|----------|-----------|
+| Quick experiment | Create branch, commit, switch back, maybe delete branch | `snap save "before experiment"` → try it → `snap restore 3` if it fails |
+| AI agent changes 20 files | Hope it works, or manually inspect all changes | Every file auto-saved before agent touches it. Restore any or all. |
+| Compare what changed | `git diff` only works for uncommitted changes | Compare any two points in time, even past checkpoints against each other |
+| Half the changes are good, half are bad | Cherry-pick specific hunks, resolve conflicts | Restore only the broken files from the good checkpoint, keep the rest |
+| Want to try 3 different approaches | 3 branches, switching context, remembering which is which | Save → try approach 1 → save → try approach 2 → save → compare all three, pick what works |
+| Undo one file but keep everything else | `git checkout -- file` only works for uncommitted. Otherwise complex. | `snap restore-file 3 src/auth.go` — done. Rest of project untouched. |
+
+Snap is not a replacement for Git. Git is for publishing, collaborating, and version history. Snap is for the messy in-between — the 50 experiments you try before you're ready to commit.
+
+---
+
+## How It Saves Time
+
+- **2ms to save.** No staging, no commit messages you'll never read again, no branch management. Just save and keep moving.
+- **Instant restore.** Don't spend 10 minutes trying to manually undo what an agent did. One command — you're back.
+- **No cleanup needed.** No stale experiment branches to delete later. No "WIP" commits cluttering your log. Snap checkpoints live locally and clean themselves up.
+- **Zero mental overhead.** You don't have to plan when to save. Save early, save often. It costs nothing. If you forget, the auto-save and recording systems have your back.
+- **Skip the investigation.** Instead of reading through 20 changed files to find what broke, just diff two checkpoints and see exactly what's different. Or restore file by file until you find the one that broke things.
+
+---
+
+## Mix and Match — Restore Different Files from Different Checkpoints
+
+This is something Git makes very hard, but Snap makes trivial.
+
+Say you have 3 checkpoints. In checkpoint #2 the auth system was perfect. In checkpoint #4 the UI was perfect. But right now both are broken.
+
+With Snap:
+```bash
+snap restore-file 2 src/auth/middleware.go
+snap restore-file 2 src/auth/jwt.go
+snap restore-file 4 src/components/Dashboard.tsx
+snap restore-file 4 src/components/Sidebar.tsx
+```
+
+Done. You now have the best version of each file from different points in time. No merge conflicts, no cherry-picking, no branch gymnastics. Just grab what you need from wherever it was best.
+
+In the VS Code extension: expand any checkpoint → right-click any file → "Restore This File". Do this across multiple checkpoints to assemble exactly the state you want.
+
+---
+
+## AI Agents Automatically Use It
+
+This is where Snap really shines. When you initialize Snap in a project:
+
+**1. Instruction files are auto-created** — Snap generates instruction files (`CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`) that teach AI agents to use Snap. The agent learns to:
+- Save a checkpoint before making any risky change
+- Save after completing a logical unit of work
+- Use continuous recording during large refactors
+- Pin important stable states
+- Watch critical files like configs and migrations
+
+**2. Auto-save hook** — Configure a hook so that every single time an AI agent is about to edit any file, Snap automatically saves that file first. The agent doesn't even have to "remember" — it's enforced at the system level. If the agent breaks anything, you always have the exact "before" version of every file it touched.
+
+**3. The agent checkpoints for you** — Because the agent reads the instruction file, it will proactively run `snap save "before: auth refactor"` before starting work and `snap save "after: auth refactor"` when done. You get a clean timeline of what the agent did and when — without lifting a finger.
+
+**4. Agent activity detection** — When recording is active, Snap auto-detects when an AI agent makes changes (multiple files changing within seconds) and tags those entries in the timeline as `[agent]`. So you can always tell "this is what I changed" vs "this is what the agent changed."
+
+The result: you hand control to an AI agent with full confidence. If it goes wrong, you have complete recovery options — from a full project restore to surgical single-file rollback. Zero trust required.
+
+### Claude Code Hook (Auto-save before edits)
+
+Add to `~/.claude/settings.json` for automatic protection:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -d .snap ]; then FILE=$(echo \"$TOOL_INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('file_path',''))\" 2>/dev/null); if [ -n \"$FILE\" ] && [ -f \"$FILE\" ]; then snap save-file \"$FILE\" \"before agent edit\" 2>/dev/null; fi; fi",
+            "timeout": 5,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+This auto-saves every file before any agent edits it — zero manual work, fully automatic safety net.
+
+---
+
+## All Features
+
+### Save Checkpoints
+Save your entire project state with a message and an optional description. Takes about 2 milliseconds. Only files that actually changed since your last save get stored — so it's fast and space-efficient no matter how big your project is.
+
+### Restore to Any Point
+Jump back to any previous checkpoint instantly. Before restoring, Snap automatically saves your current state — so you can never accidentally lose your work. You can always go back to where you were before the restore.
+
+### Single File Restore
+Restore just one file from any checkpoint without touching the rest of your project. Mix and match files from different checkpoints to assemble exactly the state you want.
+
+### Diff & Compare
+Compare any two checkpoints side by side. See which files were added, modified, or deleted. Drill into individual files to see exactly which lines changed — with full color highlighting. Compare any checkpoint against your current working directory. Compare a specific file between two checkpoints.
+
+### Status — What Changed?
+See at a glance what's different since your last checkpoint. Shows all modified, added, and deleted files in a simple list.
+
+### View File at Any Point
+Peek at the content of any file at any checkpoint — without restoring the whole project. Great for checking "what did this file look like 3 checkpoints ago?"
+
+### Single File Save
+Don't want to save the whole project? Save just one file, or multiple specific files, as a lightweight checkpoint.
+
+### Multi-File Select
+Select multiple files at once (Ctrl+click in VS Code explorer) and save them as a single checkpoint. In the CLI, pass multiple file paths in one command.
+
+### Descriptions on Checkpoints
+Add an optional description to any checkpoint for extra context — like "JWT working, refresh token pending". Shows up in the timeline and tooltip for easy reference.
+
+### Pin Important Checkpoints
+Pin any checkpoint to mark it as important. Pinned checkpoints appear at the top of your timeline in a dedicated "Pinned" section and are never automatically deleted by garbage collection. Unpin anytime to move them back.
+
+### Continuous Background Recording
+Start recording and Snap watches every file change in real-time — automatically, in the background. Every save you make to any file is captured with an exact timestamp. This lets you rewind to any second, not just your explicit checkpoints.
+
+### Rewind to Any Moment
+When recording is active, jump back to any point in time. Supports natural time formats: "5 minutes ago", "2:30 PM", "14:30:05", "Aug 16 14:30", or full date-times. Just copy a timestamp from the timeline and paste it.
+
+### Timeline Viewer
+See a chronological list of every recorded change — which file was modified or created, when, and whether it was you or an AI agent who made the change.
+
+### Watch Critical Files
+Mark important files (config files, database migrations, environment files) for automatic checkpointing. Any time a watched file changes, Snap saves it automatically — no manual action needed. Perfect for files that are dangerous to lose or hard to recover.
+
+### Garbage Collection
+Over time, checkpoints accumulate. Snap's cleanup command analyzes all your checkpoints and safely removes duplicates, outdated auto-saves, and unreferenced data. Run it manually anytime, or let the automatic hourly cleanup handle it in the background. Pinned and recent checkpoints are never touched.
+
+### Delete Checkpoints
+Remove any checkpoint you no longer need. Simple, immediate, with a confirmation prompt.
+
+### .snapignore — Exclude Files
+Create a `.snapignore` file to tell Snap which files and folders to skip — like `node_modules`, build folders, `.env` files, or anything else you don't want in your checkpoints. Comes with sensible defaults out of the box. Changes take effect immediately without restarting.
+
+### Separate from Git
+Snap doesn't touch your Git history. It's a completely independent system. Your commit history stays clean while you checkpoint as often as you want. No stale branches, no WIP commits, no clutter.
+
+### Auto-Adds to .gitignore
+The `.snap` folder is automatically added to your `.gitignore` so checkpoints never get committed to your repository.
+
+### Repair Mode
+If your `.snap` folder gets corrupted or partially deleted, running `snap init` again fixes it — detects what's broken and repairs the structure without losing existing checkpoints.
 
 ---
 
 ## Installation
 
-### CLI Installation
+### Step 1 — Install the CLI
 
 **macOS (Recommended — Homebrew):**
 
 ```bash
 brew tap NiHaLOO7/snap
-brew trust --formula nihaloo7/snap/devsnap
 brew install NiHaLOO7/snap/devsnap
 
 # Verify
@@ -115,15 +262,15 @@ sudo mv snap /usr/local/bin/snap
 3. Move to a folder in your PATH (e.g., `C:\Users\YourName\bin\`)
 4. Add that folder to your system PATH if not already there
 
-### VS Code Extension Installation
+### Step 2 — Install the VS Code Extension
 
 > **Prerequisite:** Install the `snap` CLI first (see above). The extension calls the CLI under the hood.
 
-**Step 1: Download the extension**
+**Download the extension:**
 
-Download `snap-checkpoints-1.1.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases/tag/v1.0.0) page.
+Download `snap-checkpoints-1.1.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
 
-**Step 2: Install in VS Code**
+**Install in VS Code:**
 
 Option A — Terminal:
 ```bash
@@ -139,85 +286,109 @@ Option B — VS Code UI:
 6. Click **Install**
 7. Reload VS Code when prompted
 
-**Step 3: Verify**
+**Verify:**
 
-After reload, you should see a **bookmark icon** (📑) in the left activity bar. That's the Snap panel.
+After reload, you should see a **bookmark icon** in the left activity bar. That's the Snap panel.
 
-**Step 4: Initialize your project**
+### Step 3 — Initialize your project
 
 Open any project folder in VS Code, then either:
 - Run `snap init` in the terminal, OR
 - Open Command Palette (`Cmd+Shift+P`) → type "Snap: Initialize"
 
-The Snap panel will now show your checkpoints.
-
-### Extension: Getting Started
-
-Once installed, here's the typical workflow inside VS Code:
-
-```
-1. Click the bookmark icon in the left sidebar
-   → Opens the Snap panel
-
-2. Click the save icon (💾) at the top of Timeline panel
-   → Enter a message: "before refactoring auth"
-   → Optionally add a description
-   → Checkpoint saved!
-
-3. Make changes (or let an agent make changes)...
-
-4. Check the "Changes Since Last Snapshot" panel
-   → Shows which files changed in real-time
-
-5. Expand any checkpoint to see its files
-   → Click a file name to VIEW its content at that point
-   → Click the diff icon (⇔) to see side-by-side DIFF vs current
-
-6. Need to go back?
-   → Right-click a checkpoint → "Restore"
-   → Confirms first, auto-saves current state, then restores
-   
-7. Want to clean up?
-   → Click the trash icon (🗑) on any checkpoint to delete it
-```
-
-The diff view uses VS Code's native diff editor — same word-level highlighting as the built-in Git extension. Changed characters within a line are highlighted in a darker shade so you can see exactly what changed.
+The Snap panel will now show your checkpoints. Done — you're ready to use Snap.
 
 ---
 
-## Quick Start
+## Using the VS Code Extension
 
-```bash
-# 1. Go to your project
-cd your-project
+Once installed, a bookmark icon appears in your left activity bar. Click it to open the Snap panel with two sections:
 
-# 2. Initialize snap
-snap init
+### Timeline Panel (top)
 
-# 3. Save your first checkpoint
-snap save "initial working state"
+Shows all your checkpoints organized into three categories:
+- **Pinned** — your most important checkpoints, always at the top, never auto-deleted
+- **Checkpoints** — your manually saved snapshots
+- **Auto-saves** — automatic saves created by the system (before restores, before agent edits, etc.)
 
-# 4. Work, make changes, let agents run...
+Each checkpoint shows: ID number, message, date & time, and file count.
 
-# 5. Save another checkpoint with optional description
-snap save "auth complete" -d "JWT working, refresh token pending"
+### Changes Panel (bottom)
 
-# 6. Check what changed since last save
-snap status
+Shows files that changed since your last checkpoint — auto-refreshes in real-time as you edit. Shows modified (~), added (+), and deleted (-) files.
 
-# 7. Something broke? See the diff
-snap diff 1 2 -f
+### Step-by-step workflow
 
-# 8. Restore to any checkpoint (current state auto-saved)
-snap restore 1
+**1. Save a checkpoint:** Click the save icon at the top of Timeline → type a message like "before refactoring auth" → optionally add a description → your entire project state is saved.
 
-# 9. View a file at any checkpoint
-snap show 2 src/main.go
-```
+**2. Make changes** — code yourself or let an AI agent work...
+
+**3. Check what's different:** Look at the Changes panel to see what's been modified since your last save.
+
+**4. Browse checkpoint files:** Expand any checkpoint to see a clean folder tree of all files in that snapshot. Folders with only one subfolder are compacted for cleaner display (e.g., "src/auth/middleware" instead of nested individual folders).
+
+**5. Live file status badges:**
+- Yellow **M** = this file has been modified since that checkpoint
+- Red **D** = this file has been deleted from your current directory
+- Folders also show colored status — yellow if they contain modified files, red if all files inside are deleted
+- Status updates automatically as you edit files — no manual refresh needed
+
+**6. Diff a file:** Click any file inside a checkpoint → side-by-side diff opens (snapshot on left, current on right). Full syntax highlighting and word-level change detection — same quality as VS Code's built-in Git diff.
+
+**7. View file content:** Right-click a file inside a checkpoint → "Show File" to view that file's content at that point in time (read-only).
+
+**8. Restore entire checkpoint:** Click the restore icon on any checkpoint. It asks for confirmation, auto-saves your current state, then restores. You can always undo by restoring the auto-save.
+
+**9. Restore single file:** Click the restore icon on a specific file inside any checkpoint. Only that file gets restored — everything else stays as-is.
+
+**10. Save specific files:** Right-click one or multiple files in the VS Code Explorer → "Snap: Save This File". Saves just those files as a checkpoint. Also works from the editor right-click menu for the currently open file.
+
+**11. Pin/Unpin:** Click the pin icon on any checkpoint to pin it. It moves to the "Pinned" section at the top and will never be auto-deleted. Click the unpin icon to move it back to its original category.
+
+**12. Delete:** Click the trash icon on any checkpoint to remove it permanently (with confirmation).
+
+**13. Refresh:** Click the refresh icon at the top to manually refresh the timeline. The extension also auto-refreshes when files change on disk.
 
 ---
 
-## CLI Commands
+## CLI Quick Reference
+
+| Command | What it does |
+|---------|-------------|
+| `snap init` | Set up Snap in your project |
+| `snap save "message"` | Save a full project checkpoint |
+| `snap save "msg" -d "description"` | Save with extra context |
+| `snap save-file path/to/file "message"` | Save specific file(s) |
+| `snap list` | Show all checkpoints |
+| `snap status` | What changed since last save |
+| `snap diff 3` | Compare checkpoint #3 vs current |
+| `snap diff 1 5` | Compare two checkpoints |
+| `snap diff 1 5 -f` | Full line-by-line diff |
+| `snap diff 1 2 src/main.go` | Diff a specific file between two checkpoints |
+| `snap show 3` | List files in checkpoint #3 |
+| `snap show 3 src/main.go` | View file content at #3 |
+| `snap restore 3` | Restore to checkpoint #3 (auto-saves current state first) |
+| `snap restore-file 3 src/main.go` | Restore just one file from any checkpoint |
+| `snap delete 4` | Delete a checkpoint |
+| `snap pin 3` | Pin a checkpoint (never auto-deleted) |
+| `snap unpin 3` | Unpin a checkpoint |
+| `snap record start` | Start background recording |
+| `snap record stop` | Stop recording |
+| `snap record status` | Check if recording is active |
+| `snap timeline` | View all recorded changes with timestamps |
+| `snap rewind "5 minutes ago"` | Jump back in time |
+| `snap rewind "2:30 PM"` | Rewind to specific time |
+| `snap rewind "Aug 16 14:30"` | Rewind to specific date and time |
+| `snap watch add config.yml` | Auto-checkpoint this file on every change |
+| `snap watch list` | Show watched files |
+| `snap watch remove config.yml` | Stop watching a file |
+| `snap clean` | Remove old/duplicate snapshots |
+| `snap clean --dry-run` | Preview cleanup without doing it |
+| `snap clean --auto` | Cleanup without confirmation prompt |
+
+---
+
+## CLI Commands (Detailed)
 
 ### `snap init`
 
@@ -252,18 +423,11 @@ Saved snapshot #5
   Time:     8ms
 ```
 
-**How it works internally:**
-- Walks all project files (respecting `.snapignore`)
-- Hashes each file with SHA-256
-- Only stores files that changed (content-addressed deduplication)
-- Compresses with zlib
-- Saves metadata (timestamp, message, description, file tree)
-
 ---
 
 ### `snap list` / `snap ls`
 
-Show all checkpoints organized in two categories.
+Show all checkpoints organized by category.
 
 ```
 $ snap list
@@ -285,8 +449,6 @@ $ snap list
 
   Total: 3 checkpoints, 2 auto-saves
 ```
-
-User checkpoints and auto-saves are separated so you can easily identify your intentional save points.
 
 ---
 
@@ -318,8 +480,6 @@ import (
 )
 ```
 
-This helps you decide which checkpoint to restore — peek at the code before jumping back.
-
 ---
 
 ### `snap restore <id>`
@@ -336,8 +496,6 @@ Restored successfully. (42 files)
 
 Your previous state is saved as #6 if you need it back.
 ```
-
-**Safety guarantee:** Before restoring, your current state is automatically saved. You can always get it back.
 
 ---
 
@@ -419,76 +577,121 @@ Deleted snapshot #4 "auto-save before restore to #2"
 
 ---
 
-## VS Code Extension
+### `snap record start/stop/status`
 
-The extension provides a visual interface for all snap operations directly in VS Code.
+Continuous background recording — capture every file change automatically.
 
-### How it Works
+```bash
+# Start recording (runs as background daemon)
+snap record start
 
-Once installed, a **bookmark icon** appears in the activity bar (left sidebar). Click it to open the Snap panel with two sections:
+# Check status
+snap record status
+⏺  Recording active (PID 12345)
+   47 changes recorded over 2h15m
+   Storage: 89.3 KB
 
-**1. Timeline Panel**
+# View recent changes
+snap timeline
+Timeline — last 20 changes (total: 47)
 
-```
-SNAP CHECKPOINTS
-│
-├── 📌 Checkpoints
-│   ├── ◉ #5 — working oauth          Aug 11 11:45 • 48 files
-│   │   ├── src/main.go               ← click to view content
-│   │   ├── src/auth/jwt.go               click diff icon for comparison
-│   │   └── src/auth/middleware.go
-│   │
-│   ├── ● #3 — after auth refactor    Aug 11 11:15 • 47 files
-│   │   └── ...
-│   │
-│   └── ● #1 — initial state          Aug 11 10:02 • 42 files
-│       └── ...
-│
-└── 🔄 Auto-saves
-    ├── ◎ #6 — auto-save before restore to #1 "initial state"
-    └── ○ #4 — auto-save before restore to #2 "before auth"
-```
+  Aug 16 14:30:12 ~ src/auth.go modify
+  Aug 16 14:30:15 + src/middleware.go create
+  Aug 16 14:31:02 ~ src/auth.go modify [agent]
+  Aug 16 14:31:02 ~ src/handler.go modify [agent]
+  ...
 
-**2. Changes Panel**
+# Rewind to any moment
+snap rewind "5 minutes ago"
+snap rewind "2:47 PM"
+snap rewind "14:30:05"
+snap rewind "Aug 16 14:30"
 
-Shows files changed since last snapshot (auto-refreshes as you edit):
-
-```
-CHANGES SINCE LAST SNAPSHOT
-  ~ src/auth.go         modified
-  + src/new_file.go     added
-  - src/removed.go      deleted
+# Stop recording
+snap record stop
 ```
 
-### Extension Features
+---
 
-| Action | How |
-|--------|-----|
-| **Save checkpoint** | Click save icon (top of Timeline panel) → type message → optional description |
-| **Diff file vs current** | Expand checkpoint → click any file |
-| **View file at checkpoint** | Expand checkpoint → right-click file → "Show File" |
-| **Restore checkpoint** | Click restore icon (↩) on checkpoint, or right-click → Restore |
-| **Delete checkpoint** | Click trash icon (🗑) on checkpoint, or right-click → Delete |
-| **Restore single file** | Click restore icon (↩) on a file inside checkpoint |
-| **Save current file** | Right-click in editor → "Snap: Save This File" |
-| **Refresh** | Click refresh icon (top of Timeline panel) |
+### `snap save-file` / `snap restore-file`
 
-### Diff View
+Save and restore individual files without affecting the rest of your project:
 
-When you click the diff icon on a file, VS Code opens its **native diff editor**:
+```bash
+# Save just one file
+snap save-file src/auth.go "before refactor"
 
-- Side-by-side comparison (snapshot version ↔ current version)
-- **Word-level highlighting** — exact characters that changed are highlighted (just like Git in VS Code)
-- Full syntax highlighting for both sides
-- Inline navigation between changes
+# Save multiple files
+snap save-file src/auth.go src/middleware.go -m "before auth changes"
 
-This gives you the same experience as VS Code's built-in Git diff.
+# Restore a single file from any snapshot
+snap restore-file 3 src/auth.go
+```
 
-### Extension Requirements
+---
 
-- `snap` CLI must be installed and available in system PATH
-- Project must have `.snap/` directory (run `snap init` first)
-- Extension auto-activates when it detects `.snap` folder in workspace
+### `snap pin` / `snap unpin`
+
+Pin important snapshots so they're never auto-deleted by garbage collection:
+
+```bash
+snap pin 3        # Pin — never auto-deleted
+snap unpin 3      # Unpin
+snap list         # Shows ⭐ pinned tag
+```
+
+---
+
+### `snap watch`
+
+Mark files for automatic checkpointing on every change:
+
+```bash
+# Add a file to watchlist
+snap watch add config/database.yml
+
+# List watched files
+snap watch list
+Watched files:
+  config/database.yml
+  db/migrations/latest.sql
+
+# Remove from watchlist
+snap watch remove config/database.yml
+```
+
+When recording is active, any change to a watched file automatically creates a single-file checkpoint.
+
+---
+
+### `snap clean`
+
+Analyze and remove safe-to-delete snapshots:
+
+```bash
+$ snap clean
+
+Snap Clean Analysis:
+
+  Total snapshots: 89
+  Safe to remove:  62 snapshots
+  Keeping:         27 snapshots
+  Orphaned objects: 15
+  Space to free:   290.4 MB
+
+  Removals:
+    #12  [auto] auto-save before restore (3 days ago) — superseded by newer auto-save within 5 min
+    #15  [auto] auto-save before edit (5 days ago) — duplicate of #14 (identical state)
+    ...
+
+Proceed? [y/n]
+```
+
+Flags:
+- `snap clean --dry-run` — show what would be removed, no changes
+- `snap clean --auto` — remove without confirmation (for scripts/automation)
+
+**Automatic GC:** When recording is active, the daemon runs garbage collection every hour automatically. Removes duplicates, superseded auto-saves, old auto-saves beyond 7-day retention, and orphaned objects. Never touches pinned or user-created recent snapshots.
 
 ---
 
@@ -591,183 +794,6 @@ npx @vscode/vsce package --allow-missing-repository
 
 ---
 
-## Continuous Recording
-
-Snap can record **every file change** in the background — letting you rewind to any second, not just explicit checkpoints.
-
-```bash
-# Start recording (runs as background daemon)
-snap record start
-
-# Check status
-snap record status
-⏺  Recording active (PID 12345)
-   47 changes recorded over 2h15m
-   Storage: 89.3 KB
-
-# View recent changes
-snap timeline
-Timeline — last 20 changes (total: 47)
-
-  Aug 16 14:30:12 ~ src/auth.go modify
-  Aug 16 14:30:15 + src/middleware.go create
-  Aug 16 14:31:02 ~ src/auth.go modify [agent]
-  Aug 16 14:31:02 ~ src/handler.go modify [agent]
-  ...
-
-# Rewind to any moment (copy timestamp from timeline output)
-snap rewind "5 minutes ago"
-snap rewind "2:47 PM"
-snap rewind "14:30:05"
-snap rewind "Aug 16 14:30"
-snap rewind "2024-08-16 14:30:05"
-
-# Stop recording
-snap record stop
-```
-
-**How it works:**
-- Background daemon watches all project files via fsnotify
-- Every file save is captured with timestamp + stored in object store
-- Changes flushed to compressed segment files every 3 seconds
-- Agent bursts auto-detected (5+ files in 3 seconds marked as `[agent]`)
-- Compaction runs hourly — old segments cleaned based on retention (default 7 days)
-- Max storage: 100MB (configurable)
-
----
-
-## Single File Operations
-
-Save and restore individual files without affecting the rest of your project:
-
-```bash
-# Save just one file
-snap save-file src/auth.go "before refactor"
-
-# Restore a single file from any snapshot
-snap restore-file 3 src/auth.go
-```
-
-In the VS Code extension:
-- Right-click any file in editor → **"Snap: Save This File"**
-- Expand a checkpoint → right-click a file → **"Restore This File"**
-
----
-
-## Pin Snapshots
-
-Pin important snapshots so they're never auto-deleted by garbage collection:
-
-```bash
-snap pin 3        # Pin — never auto-deleted
-snap unpin 3      # Unpin
-snap list         # Shows ⭐ pinned tag
-```
-
----
-
-## Watch Critical Files
-
-Mark files for automatic checkpointing on every change — ideal for config files, migrations, or anything dangerous to lose:
-
-```bash
-# Add a file to watchlist
-snap watch add config/database.yml
-
-# List watched files
-snap watch list
-Watched files:
-  config/database.yml
-  db/migrations/latest.sql
-
-# Remove from watchlist
-snap watch remove config/database.yml
-```
-
-When recording is active, any change to a watched file automatically creates a single-file checkpoint. No manual save needed.
-
----
-
-## Garbage Collection
-
-### Manual Clean
-
-Analyze and remove safe-to-delete snapshots:
-
-```bash
-$ snap clean
-
-Snap Clean Analysis:
-
-  Total snapshots: 89
-  Safe to remove:  62 snapshots
-  Keeping:         27 snapshots
-  Orphaned objects: 15
-  Space to free:   290.4 MB
-
-  Removals:
-    #12  [auto] auto-save before restore (3 days ago) — superseded by newer auto-save within 5 min
-    #15  [auto] auto-save before edit (5 days ago) — duplicate of #14 (identical state)
-    ...
-
-Proceed? [y/n]
-```
-
-Flags:
-- `snap clean --dry-run` — show what would be removed, no changes
-- `snap clean --auto` — remove without confirmation (for scripts/automation)
-
-### Automatic GC
-
-When recording is active, the daemon runs garbage collection **every hour** automatically:
-- Removes duplicate snapshots (same project state)
-- Removes superseded auto-saves (newer auto-save within 5 minutes)
-- Removes old auto-saves beyond 7-day retention
-- Cleans orphaned objects (unreferenced blobs)
-- **Never touches pinned or user-created recent snapshots**
-
-Zero configuration needed — just works in the background.
-
----
-
-## Agent Integration
-
-`snap init` automatically creates instruction files that AI coding agents read:
-
-- **CLAUDE.md** — for Claude Code
-- **.cursorrules** — for Cursor
-- **.github/copilot-instructions.md** — for GitHub Copilot
-
-These teach agents to use snap efficiently: save before/after changes, use recording for risky work, pin important states, watch critical files.
-
-### Claude Code Hook (Auto-save before edits)
-
-Add to `~/.claude/settings.json` for automatic protection:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -d .snap ]; then FILE=$(echo \"$TOOL_INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('file_path',''))\" 2>/dev/null); if [ -n \"$FILE\" ] && [ -f \"$FILE\" ]; then snap save-file \"$FILE\" \"before agent edit\" 2>/dev/null; fi; fi",
-            "timeout": 5,
-            "async": true
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-This auto-saves every file before any agent edits it — zero manual work, fully automatic safety net.
-
----
-
 ## Architecture
 
 ```
@@ -800,6 +826,17 @@ snap/
 
 ---
 
+## Who It's For
+
+- Developers who experiment with code and want a fast undo
+- Anyone working with AI coding assistants (Claude Code, Cursor, Copilot, Windsurf)
+- Teams where agents make large changes and you need confidence nothing is lost
+- Anyone who finds Git branches/stash too heavy for quick experiments
+- Developers who want to freely try things without thinking about version control
+- Anyone who's ever lost work because they didn't commit soon enough
+
+---
+
 ## Roadmap
 
 - [x] Content-addressed object store
@@ -814,9 +851,13 @@ snap/
 - [x] Checkpoint deletion
 - [x] Pin/unpin snapshots
 - [x] Single file save/restore
+- [x] Multi-file save support
 - [x] Status (changes since last save)
 - [x] `.snapignore` support (live reload)
 - [x] VS Code extension with native diff
+- [x] VS Code file status decorations (M/D badges)
+- [x] VS Code folder tree view with compaction
+- [x] VS Code pin/unpin from sidebar
 - [x] Cross-platform binaries (macOS/Windows/Linux)
 - [x] Continuous recording (background file watcher)
 - [x] Rewind to any timestamp (multiple formats supported)
