@@ -319,6 +319,10 @@ Shows all your checkpoints organized into three categories:
 
 Each checkpoint shows: ID number, message, date & time, and file count.
 
+### Activity Bar Badge
+
+The Snap icon in the activity bar shows a **badge number** — the count of files that have changed since your last full project checkpoint. Hover over it to see exactly which snapshot it's comparing against (e.g., `"5 files changed since #4 "added notifications"`). The badge updates automatically as you edit files, save checkpoints, restore, or delete snapshots.
+
 ### Changes Panel (bottom)
 
 Shows files that changed since your last checkpoint — auto-refreshes in real-time as you edit. Shows modified (~), added (+), and deleted (-) files.
@@ -872,6 +876,7 @@ snap/
 - [x] VS Code file status decorations (M/D badges)
 - [x] VS Code folder tree view with compaction
 - [x] VS Code pin/unpin from sidebar
+- [x] VS Code activity bar badge (changed files count with snapshot reference)
 - [x] Cross-platform binaries (macOS/Windows/Linux)
 - [x] Continuous recording (background file watcher)
 - [x] Rewind to any timestamp (multiple formats supported)

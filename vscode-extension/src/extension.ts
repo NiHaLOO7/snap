@@ -44,6 +44,20 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorationProvider));
     vscode.window.registerTreeDataProvider('snapChanges', changesProvider);
 
+    const updateBadge = async () => {
+        const { getStatus, getSnapshots } = await import('./snapCli');
+        const changes = await getStatus(workspaceRoot);
+        if (changes.length > 0) {
+            const snapshots = await getSnapshots(workspaceRoot);
+            const lastFull = [...snapshots].reverse().find(s => s.fileCount > 5) || snapshots[snapshots.length - 1];
+            const label = lastFull ? `#${lastFull.id} "${lastFull.message}"` : 'last snapshot';
+            treeView.badge = { value: changes.length, tooltip: `${changes.length} files changed since ${label}` };
+        } else {
+            treeView.badge = undefined;
+        }
+    };
+    updateBadge();
+
     context.subscriptions.push(
         vscode.workspace.registerTextDocumentContentProvider('snap', contentProvider)
     );
@@ -86,6 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(`Saved: "${msg}"`);
                 snapProvider.refresh();
                 changesProvider.refresh();
+                updateBadge();
             } else {
                 vscode.window.showErrorMessage(`Save failed: ${result.error}`);
             }
@@ -123,6 +138,7 @@ export function activate(context: vscode.ExtensionContext) {
                 snapProvider.refresh();
                 changesProvider.refresh();
                 refreshDecorationData();
+                updateBadge();
             } else {
                 vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
             }
@@ -198,6 +214,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(`Restored ${item.filePath} from #${item.snapshotId}`);
                 snapProvider.refresh();
                 refreshDecorationData();
+                updateBadge();
             } else {
                 vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
             }
@@ -237,6 +254,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (result.success) {
                 vscode.window.showInformationMessage(`Saved checkpoint: ${label}`);
                 snapProvider.refresh();
+                updateBadge();
             } else {
                 vscode.window.showErrorMessage(`Save failed: ${result.error}`);
             }
@@ -273,6 +291,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage(`Deleted #${id}`);
                 snapProvider.refresh();
                 refreshDecorationData();
+                updateBadge();
             } else {
                 vscode.window.showErrorMessage(`Delete failed: ${result.error}`);
             }
@@ -306,6 +325,7 @@ export function activate(context: vscode.ExtensionContext) {
             snapProvider.refresh();
             changesProvider.refresh();
             refreshDecorationData();
+            updateBadge();
         })
     );
 
@@ -319,6 +339,7 @@ export function activate(context: vscode.ExtensionContext) {
         debounceTimer = setTimeout(() => {
             changesProvider.refresh();
             decorationProvider.refresh();
+            updateBadge();
         }, 2000);
     };
 

@@ -834,7 +834,17 @@ func cmdStatus() {
 		return
 	}
 
-	lastSnap := snapshots[len(snapshots)-1]
+	// Find last full-project snapshot (skip single-file saves with <= 5 files)
+	var lastSnap *snapshot.Snapshot
+	for i := len(snapshots) - 1; i >= 0; i-- {
+		if snapshots[i].FileCount > 5 {
+			lastSnap = snapshots[i]
+			break
+		}
+	}
+	if lastSnap == nil {
+		lastSnap = snapshots[len(snapshots)-1]
+	}
 
 	currentTree, err := engine.GetCurrentTree()
 	if err != nil {
@@ -854,6 +864,7 @@ func cmdStatus() {
 		return
 	}
 
+	// Filter out files that are in .snapignore for current tree comparison
 	sort.Slice(changes, func(i, j int) bool {
 		return changes[i].Path < changes[j].Path
 	})
