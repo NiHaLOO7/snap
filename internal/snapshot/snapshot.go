@@ -207,6 +207,35 @@ func (e *Engine) SaveWithDescription(message, description string, autoSave bool)
 	return snap, nil
 }
 
+func (e *Engine) SaveFromTree(tree map[string]string, message, description string) (*Snapshot, error) {
+	nextID, err := e.nextID()
+	if err != nil {
+		return nil, fmt.Errorf("get next id: %w", err)
+	}
+
+	snap := &Snapshot{
+		ID:          nextID,
+		Message:     message,
+		Description: description,
+		Timestamp:   time.Now(),
+		Tree:        tree,
+		FileCount:   len(tree),
+	}
+
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal snapshot: %w", err)
+	}
+
+	filename := fmt.Sprintf("%04d.json", snap.ID)
+	path := filepath.Join(e.snapPath, "snapshots", filename)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return nil, fmt.Errorf("write snapshot: %w", err)
+	}
+
+	return snap, nil
+}
+
 func (e *Engine) Restore(id int) error {
 	snap, err := e.Load(id)
 	if err != nil {

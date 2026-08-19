@@ -321,6 +321,73 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }),
 
+        vscode.commands.registerCommand('snap.export', async (item?: SnapshotItem) => {
+            if (!item) { return; }
+
+            const password = await vscode.window.showInputBox({
+                prompt: 'Password (optional — leave empty for no encryption)',
+                placeHolder: 'Press Enter to skip',
+                password: true,
+            });
+
+            if (password === undefined) { return; }
+
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(path.join(workspaceRoot, `checkpoint-${item.snapshotId}.snap`)),
+                filters: { 'Snap Files': ['snap'] },
+            });
+
+            if (!saveUri) { return; }
+
+            const args = ['export', item.snapshotId.toString(), '-o', saveUri.fsPath];
+            if (password) {
+                args.push('-p', password);
+            }
+
+            const result = await execSnap(workspaceRoot, args);
+            if (result.success) {
+                const msg = password ? 'Exported (encrypted)' : 'Exported';
+                vscode.window.showInformationMessage(`${msg}: ${path.basename(saveUri.fsPath)}`);
+            } else {
+                vscode.window.showErrorMessage(`Export failed: ${result.error}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.import', async () => {
+            const fileUris = await vscode.window.showOpenDialog({
+                canSelectMany: false,
+                filters: { 'Snap Files': ['snap'] },
+                openLabel: 'Import',
+            });
+
+            if (!fileUris || fileUris.length === 0) { return; }
+
+            const filePath = fileUris[0].fsPath;
+
+            const password = await vscode.window.showInputBox({
+                prompt: 'Password (leave empty if not encrypted)',
+                placeHolder: 'Press Enter if no password',
+                password: true,
+            });
+
+            if (password === undefined) { return; }
+
+            const args = ['import', filePath];
+            if (password) {
+                args.push('-p', password);
+            }
+
+            const result = await execSnap(workspaceRoot, args);
+            if (result.success) {
+                vscode.window.showInformationMessage('Imported checkpoint successfully!');
+                snapProvider.refresh();
+                refreshDecorationData();
+                updateBadge();
+            } else {
+                vscode.window.showErrorMessage(`Import failed: ${result.error}`);
+            }
+        }),
+
         vscode.commands.registerCommand('snap.refresh', () => {
             snapProvider.refresh();
             changesProvider.refresh();

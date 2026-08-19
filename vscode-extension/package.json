@@ -72,6 +72,16 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "snap.export",
+        "title": "Snap: Export Checkpoint",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "snap.import",
+        "title": "Snap: Import Checkpoint",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "snap.pin",
         "title": "Snap: Pin Checkpoint",
         "icon": "$(pin)"
@@ -107,6 +117,11 @@
       "view/title": [
         {
           "command": "snap.save",
+          "when": "view == snapTimeline",
+          "group": "navigation"
+        },
+        {
+          "command": "snap.import",
           "when": "view == snapTimeline",
           "group": "navigation"
         },
@@ -165,6 +180,11 @@
           "group": "1_actions"
         },
         {
+          "command": "snap.export",
+          "when": "viewItem == snapshot",
+          "group": "1_actions"
+        },
+        {
           "command": "snap.restore",
           "when": "viewItem == snapshot",
           "group": "1_actions"
@@ -176,6 +196,11 @@
         },
         {
           "command": "snap.unpin",
+          "when": "viewItem == snapshotPinned",
+          "group": "1_actions"
+        },
+        {
+          "command": "snap.export",
           "when": "viewItem == snapshotPinned",
           "group": "1_actions"
         },

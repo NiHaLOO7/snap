@@ -84,6 +84,20 @@ func (s *ObjectStore) Read(hash string) ([]byte, error) {
 	return data, nil
 }
 
+func (s *ObjectStore) ReadRaw(hash string) ([]byte, error) {
+	path := s.objectPath(hash)
+	return os.ReadFile(path)
+}
+
+func (s *ObjectStore) WriteRaw(hash string, data []byte) error {
+	dir := filepath.Join(s.basePath, hash[:2])
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create object dir: %w", err)
+	}
+	path := s.objectPath(hash)
+	return os.WriteFile(path, data, 0644)
+}
+
 func (s *ObjectStore) objectPath(hash string) string {
 	return filepath.Join(s.basePath, hash[:2], hash[2:])
 }
