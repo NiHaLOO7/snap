@@ -42,6 +42,7 @@ Built for the AI-assisted development workflow where you make experimental chang
 - [Mix and Match Restores](#mix-and-match--restore-different-files-from-different-checkpoints)
 - [AI Agent Integration](#ai-agents-automatically-use-it)
 - [All Features](#all-features)
+- [Export & Import](#export--import-checkpoints)
 - [Installation](#installation)
   - [CLI Installation](#step-1--install-the-cli)
   - [VS Code Extension](#step-2--install-the-vs-code-extension)
@@ -216,6 +217,9 @@ The `.snap` folder is automatically added to your `.gitignore` so checkpoints ne
 ### Repair Mode
 If your `.snap` folder gets corrupted or partially deleted, running `snap init` again fixes it — detects what's broken and repairs the structure without losing existing checkpoints.
 
+### Export & Import Checkpoints
+Export any checkpoint as a portable `.snap` file. Share with teammates, back up critical states, or move checkpoints between machines. Optionally encrypt with AES-256-GCM password protection. Import re-creates the checkpoint in your timeline with all file data intact — deduplicates automatically against existing blobs.
+
 ---
 
 ## Installation
@@ -367,6 +371,10 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 
 **13. Refresh:** Click the refresh icon at the top to manually refresh the timeline. The extension also auto-refreshes when files change on disk.
 
+**14. Export a checkpoint:** Right-click any checkpoint in the Timeline → "Export". Optionally set a password for AES-256 encryption → choose save location → get a portable `.snap` file containing the full checkpoint (metadata + all blobs + integrity checksum).
+
+**15. Import a checkpoint:** `Cmd+Shift+P` → "Snap: Import Checkpoint" → browse to a `.snap` file → enter password if encrypted → done. New checkpoint appears in timeline as `[imported]`, ready to diff/restore like any other checkpoint.
+
 ---
 
 ## CLI Quick Reference
@@ -403,6 +411,11 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 | `snap clean` | Remove old/duplicate snapshots |
 | `snap clean --dry-run` | Preview cleanup without doing it |
 | `snap clean --auto` | Cleanup without confirmation prompt |
+| `snap export 3` | Export checkpoint #3 as a portable .snap file |
+| `snap export 3 -p "pass"` | Export with AES-256 password protection |
+| `snap export 3 -o file.snap` | Export with custom output filename |
+| `snap import file.snap` | Import a .snap file as new checkpoint |
+| `snap import file.snap -p "pass"` | Import a password-protected file |
 
 ---
 
@@ -750,6 +763,51 @@ If 200 files exist and only 5 changed since last save, only 5 new blobs are stor
 
 ---
 
+## Export & Import Checkpoints
+
+Share checkpoints as portable `.snap` files — across machines, with teammates, or as backups. Optionally password-protect with AES-256-GCM encryption.
+
+**Use cases:**
+- Share a known-good state with a teammate debugging the same issue
+- Back up a critical checkpoint before a risky migration
+- Move checkpoints between your work laptop and home machine
+- Archive a stable state before `snap clean` removes older snapshots
+
+### Export
+
+```bash
+# Export checkpoint #3 as a .snap file
+snap export 3
+# → checkpoint-3-before-oauth.snap
+
+# Export with custom filename
+snap export 3 -o stable-auth.snap
+
+# Export with password protection (AES-256-GCM)
+snap export 3 -p "mypassword"
+```
+
+### Import
+
+```bash
+# Import into your timeline
+snap import checkpoint-3-before-oauth.snap
+# → creates a new checkpoint tagged [imported]
+
+# Import a password-protected file
+snap import stable-auth.snap -p "mypassword"
+```
+
+**File format:** Self-contained binary (magic header + metadata + all blobs + SHA-256 checksum). Deduplication on import — blobs already in your store are skipped.
+
+### VS Code Extension
+
+Export and import are also available from the extension:
+- **Export:** Right-click any checkpoint in the Timeline panel → "Export" → optionally set a password → choose save location
+- **Import:** Command Palette (`Cmd+Shift+P`) → "Snap: Import Checkpoint" → select `.snap` file → enter password if encrypted → checkpoint appears in timeline as `[imported]`
+
+---
+
 ## .snapignore
 
 Create a `.snapignore` file in your project root to exclude files/directories:
@@ -888,6 +946,7 @@ snap/
 - [x] Watch critical files (auto-checkpoint on change)
 - [x] Garbage collection (`snap clean` + automatic hourly GC)
 - [x] Auto-save before single file restore
+- [x] Export/import checkpoints as portable `.snap` files with AES-256 encryption
 - [ ] `snap when` — binary search timeline to find breaking change
 - [ ] `snap stash` — named working states for context switching
 - [ ] Snapshot export to Git commit
