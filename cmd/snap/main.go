@@ -128,52 +128,119 @@ func cmdInit() {
 }
 
 func writeAgentInstructions(root string) {
-	snapRules := `# Snap — Local Checkpoint Rules
+	snapRules := `# Snap — Local Checkpoint System
 
-This project uses snap for local checkpoints. Use snap efficiently:
+This project uses snap — a local checkpoint tool that saves, compares, and restores code instantly without Git commits. You MUST use it. These rules are non-negotiable.
 
-## Workflow (MANDATORY):
-1. Before ANY multi-file change: snap save "before: <what you're about to do>"
+## PREREQUISITE CHECK (every time, no exceptions):
+Before running ANY snap command, check if .snap/ directory exists in the project root.
+- If it exists: use snap as described below. No skipping, no excuses.
+- If it does NOT exist: skip silently. Do NOT run snap init or ask the user to initialize.
+- CRITICAL: Re-check EVERY time before making changes. Never cache from earlier in the session — the user may initialize mid-conversation.
+
+## MANDATORY WORKFLOW — follow this every single time:
+1. Before ANY file change (single or multi-file): snap save "before: <what you're about to do>"
 2. After completing a logical unit of work: snap save "after: <what you did>"
-3. If something breaks: snap restore <id>
+3. If something breaks or goes wrong: snap restore <id>
+4. Never skip checkpoints. Never batch saves "for later". Save immediately.
 
-## For continuous recording (large refactors, risky changes):
-- Start: snap record start
-- Stop when done: snap record stop
-- Rewind to exact moment: snap rewind "5 minutes ago"
+## When to use full save vs single-file save:
+- Touching 1-2 files → snap save-file <file> "message" (lightweight, faster)
+- Touching 3+ files or starting a risky task → snap save "message" (full project)
+- When in doubt, use full save. Cost is negligible (~2ms).
 
-## Single file operations (prefer when touching 1-2 files):
-- snap save-file <file> "message" — checkpoint one file
-- snap restore-file <id> <file> — restore one file from any snapshot
+## Continuous recording (large refactors, risky/exploratory work):
+- Start before beginning: snap record start
+- Stop when stable: snap record stop
+- Check if active: snap record status
+- Use this when: refactoring multiple files, letting an agent work autonomously, trying experimental approaches, or any situation where many changes happen quickly.
 
-## Protect important checkpoints:
-- snap pin <id> — prevent auto-cleanup from deleting this snapshot
+## Restore — undo anything instantly:
+- Full project restore: snap restore <id> (auto-saves current state first — you can never lose work)
+- Single file restore: snap restore-file <id> <file> (only that file changes, everything else untouched)
+- Mix and match: restore different files from different checkpoints to assemble the best state
+- Example: snap restore-file 2 src/auth.go && snap restore-file 4 src/ui.tsx
 
-## Critical file watching:
-- snap watch add <file> — mark file for auto-checkpoint on every change
-- snap watch remove <file> — stop watching
-- Use for: config files, migrations, env files, anything dangerous to lose
+## Diff & compare — understand what changed:
+- See what changed since last save: snap status
+- Compare a checkpoint vs current: snap diff <id>
+- Compare two checkpoints: snap diff <id1> <id2>
+- Full line-by-line diff: snap diff <id1> <id2> -f
+- Diff a specific file between two checkpoints: snap diff <id1> <id2> <filepath>
+- View file content at any checkpoint: snap show <id> <filepath>
 
-## All commands:
+## Pin — protect important states:
+- Pin a known-good state: snap pin <id>
+- Pinned checkpoints are NEVER auto-deleted by garbage collection
+- Unpin when no longer needed: snap unpin <id>
+- Use this before: major refactors, risky migrations, handing off to another agent
+
+## Watch — auto-protect critical files:
+- Add: snap watch add <file>
+- Remove: snap watch remove <file>
+- List: snap watch list
+- Any change to a watched file automatically creates a checkpoint
+- Use for: config files, database migrations, env files, lock files, anything dangerous to lose or hard to recover
+
+## Rewind — time travel through recorded changes:
+- Requires recording to be active (snap record start)
+- Jump back: snap rewind "5 minutes ago"
+- Specific time: snap rewind "2:30 PM" or snap rewind "14:30:05"
+- Specific date: snap rewind "Aug 16 14:30"
+- View timeline: snap timeline (shows what changed, when, and whether it was you or an agent)
+
+## Export & Import — share checkpoints:
+- Export: snap export <id> (creates portable .snap file)
+- Export with custom name: snap export <id> -o backup.snap
+- Export encrypted: snap export <id> -p "password" (AES-256-GCM)
+- Import: snap import <file.snap>
+- Import encrypted: snap import <file.snap> -p "password"
+
+## Cleanup:
+- Remove old/duplicate snapshots: snap clean
+- Preview without deleting: snap clean --dry-run
+- Auto-mode (no confirmation): snap clean --auto
+- Delete specific checkpoint: snap delete <id>
+- Automatic GC runs hourly when recording is active
+
+## All commands reference:
 - snap save "msg" — full project checkpoint
+- snap save "msg" -d "description" — checkpoint with extra context
 - snap save-file <file> "msg" — single file checkpoint
-- snap list — all checkpoints
-- snap diff <id> — what changed since snapshot
-- snap restore <id> — restore full project
-- snap restore-file <id> <file> — restore single file
+- snap list — all checkpoints (organized by category)
+- snap status — what changed since last save
+- snap diff <id> — compare checkpoint vs current
+- snap diff <id1> <id2> — compare two checkpoints
+- snap diff <id1> <id2> -f — full line-level diff
+- snap diff <id1> <id2> <file> — diff specific file between checkpoints
+- snap show <id> — list files in checkpoint
+- snap show <id> <file> — view file content at checkpoint
+- snap restore <id> — restore full project (auto-saves first)
+- snap restore-file <id> <file> — restore one file
+- snap delete <id> — delete a checkpoint
+- snap pin <id> / snap unpin <id> — protect/unprotect
 - snap record start/stop/status — continuous recording
-- snap rewind "<time>" — restore from timeline (e.g. "5 minutes ago", "14:30")
-- snap pin/unpin <id> — protect/unprotect snapshots
+- snap timeline — view recorded changes with timestamps
+- snap rewind "<time>" — jump back in time
 - snap watch add/remove/list — critical file auto-checkpoints
-- snap clean — remove redundant snapshots and free space
-- snap delete <id> — delete a snapshot
+- snap export <id> [-o file] [-p password] — export as .snap file
+- snap import <file> [-p password] — import a .snap file
+- snap clean [--dry-run] [--auto] — garbage collection
 
-## Best practices:
-- Use recording for exploratory/risky work, stop when stable
-- Pin snapshots at known-good states before big changes
-- Watch config/migration files that are hard to recover
-- Prefer save-file over full save when only 1-2 files change
-- Run snap clean --auto after long sessions to free space
+## Decision guide — what to do when:
+| Situation | Action |
+|-----------|--------|
+| About to edit any file | snap save or snap save-file FIRST |
+| Finished a task | snap save "after: what you did" |
+| Starting risky/experimental work | snap record start + snap save + snap pin |
+| Something broke | snap restore <id> or snap restore-file <id> <file> |
+| Need to compare states | snap diff <id1> <id2> |
+| Want to see what changed | snap status |
+| Critical config file exists | snap watch add <file> |
+| Sharing state with someone | snap export <id> |
+| Long session, lots of checkpoints | snap clean --auto |
+| Before a big refactor | snap save + snap pin <id> |
+| Agent making autonomous changes | snap record start (agent activity auto-detected) |
 `
 
 	// CLAUDE.md — append or create

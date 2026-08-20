@@ -82,6 +82,11 @@
         "icon": "$(cloud-download)"
       },
       {
+        "command": "snap.compareFile",
+        "title": "Snap: Compare File Between Checkpoints",
+        "icon": "$(diff-multiple)"
+      },
+      {
         "command": "snap.pin",
         "title": "Snap: Pin Checkpoint",
         "icon": "$(pin)"
@@ -221,6 +226,11 @@
         },
         {
           "command": "snap.showFile",
+          "when": "viewItem == snapshotFile",
+          "group": "1_actions"
+        },
+        {
+          "command": "snap.compareFile",
           "when": "viewItem == snapshotFile",
           "group": "1_actions"
         },

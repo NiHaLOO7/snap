@@ -198,6 +198,63 @@ export function activate(context: vscode.ExtensionContext) {
             );
         }),
 
+        vscode.commands.registerCommand('snap.compareFile', async (item: FileItem) => {
+            const { getSnapshots } = await import('./snapCli');
+            const allSnapshots = await getSnapshots(workspaceRoot);
+
+            const candidates = allSnapshots.filter(
+                s => s.id !== item.snapshotId && s.files.includes(item.filePath)
+            );
+
+            if (candidates.length === 0) {
+                vscode.window.showInformationMessage('No other checkpoints contain this file.');
+                return;
+            }
+
+            const picked = await vscode.window.showQuickPick(
+                candidates.map(s => ({
+                    label: `#${s.id} — ${s.message}`,
+                    description: `${new Date(s.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} • ${s.fileCount} files`,
+                    id: s.id,
+                })),
+                { placeHolder: `Compare ${path.basename(item.filePath)} — select another checkpoint` }
+            );
+
+            if (!picked) { return; }
+
+            const [resultA, resultB] = await Promise.all([
+                execSnap(workspaceRoot, ['show', item.snapshotId.toString(), item.filePath]),
+                execSnap(workspaceRoot, ['show', picked.id.toString(), item.filePath]),
+            ]);
+
+            if (!resultA.success || !resultB.success) {
+                vscode.window.showErrorMessage('Failed to fetch file content from checkpoints.');
+                return;
+            }
+
+            const parseContent = (raw: string) => {
+                const headerEnd = raw.indexOf('\n\n');
+                return headerEnd !== -1 ? raw.substring(headerEnd + 2) : raw;
+            };
+
+            const contentA = parseContent(resultA.output);
+            const contentB = parseContent(resultB.output);
+
+            const uriA = vscode.Uri.parse(`snap://compare/${item.snapshotId}/${item.filePath}?ts=${Date.now()}`);
+            const uriB = vscode.Uri.parse(`snap://compare/${picked.id}/${item.filePath}?ts=${Date.now()}`);
+
+            contentProvider.setContent(uriA.toString(), contentA);
+            contentProvider.setContent(uriB.toString(), contentB);
+
+            await vscode.commands.executeCommand(
+                'vscode.diff',
+                uriA,
+                uriB,
+                `#${item.snapshotId} ↔ #${picked.id}: ${path.basename(item.filePath)}`,
+                { renderSideBySide: true }
+            );
+        }),
+
         vscode.commands.registerCommand('snap.restoreFile', async (item: FileItem) => {
             const confirm = await vscode.window.showWarningMessage(
                 `Restore ${item.filePath} from snapshot #${item.snapshotId}? This will overwrite the current file.`,
