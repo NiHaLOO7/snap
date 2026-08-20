@@ -44,6 +44,15 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorationProvider));
     vscode.window.registerTreeDataProvider('snapChanges', changesProvider);
 
+    treeView.onDidChangeVisibility(e => {
+        if (e.visible) {
+            snapProvider.refresh();
+            changesProvider.refresh();
+            refreshDecorationData();
+            updateBadge();
+        }
+    });
+
     const updateBadge = async () => {
         const { getStatus, getSnapshots } = await import('./snapCli');
         const changes = await getStatus(workspaceRoot);

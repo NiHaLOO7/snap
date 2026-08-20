@@ -74,6 +74,8 @@ func main() {
 		cmdRewind()
 	case "timeline":
 		cmdTimeline()
+	case "update-rules":
+		cmdUpdateRules()
 	case "version":
 		fmt.Printf("snap v%s\n", version)
 	case "help", "--help", "-h":
@@ -102,6 +104,8 @@ func cmdInit() {
 		} else {
 			fmt.Println("Already initialized. Structure verified ✓")
 		}
+		writeAgentInstructions(root)
+		fmt.Println("  Agent instruction files updated to latest rules.")
 		return
 	}
 
@@ -243,43 +247,71 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 | Agent making autonomous changes | snap record start (agent activity auto-detected) |
 `
 
-	// CLAUDE.md — append or create
+	const snapHeader = "# Snap — Local Checkpoint"
+
+	// CLAUDE.md — update or create
 	claudeMdPath := filepath.Join(root, "CLAUDE.md")
 	if data, err := os.ReadFile(claudeMdPath); err == nil {
-		if !strings.Contains(string(data), "snap save") {
+		content := string(data)
+		if idx := strings.Index(content, snapHeader); idx != -1 {
+			// Replace existing snap section (from header to end of file or next top-level heading)
+			before := content[:idx]
+			os.WriteFile(claudeMdPath, []byte(strings.TrimRight(before, "\n")+"\n\n"+snapRules), 0644)
+			fmt.Println("  Updated CLAUDE.md with latest snap rules")
+		} else {
 			os.WriteFile(claudeMdPath, append(data, []byte("\n\n"+snapRules)...), 0644)
-			fmt.Println("  Updated CLAUDE.md with snap rules")
+			fmt.Println("  Appended snap rules to CLAUDE.md")
 		}
 	} else {
 		os.WriteFile(claudeMdPath, []byte(snapRules), 0644)
 		fmt.Println("  Created CLAUDE.md with snap rules")
 	}
 
-	// .cursorrules — append or create
+	// .cursorrules — update or create
 	cursorPath := filepath.Join(root, ".cursorrules")
 	if data, err := os.ReadFile(cursorPath); err == nil {
-		if !strings.Contains(string(data), "snap save") {
+		content := string(data)
+		if idx := strings.Index(content, snapHeader); idx != -1 {
+			before := content[:idx]
+			os.WriteFile(cursorPath, []byte(strings.TrimRight(before, "\n")+"\n\n"+snapRules), 0644)
+			fmt.Println("  Updated .cursorrules with latest snap rules")
+		} else {
 			os.WriteFile(cursorPath, append(data, []byte("\n\n"+snapRules)...), 0644)
-			fmt.Println("  Updated .cursorrules with snap rules")
+			fmt.Println("  Appended snap rules to .cursorrules")
 		}
 	} else {
 		os.WriteFile(cursorPath, []byte(snapRules), 0644)
 		fmt.Println("  Created .cursorrules with snap rules")
 	}
 
-	// .github/copilot-instructions.md
+	// .github/copilot-instructions.md — update or create
 	copilotDir := filepath.Join(root, ".github")
 	copilotPath := filepath.Join(copilotDir, "copilot-instructions.md")
 	if data, err := os.ReadFile(copilotPath); err == nil {
-		if !strings.Contains(string(data), "snap save") {
+		content := string(data)
+		if idx := strings.Index(content, snapHeader); idx != -1 {
+			before := content[:idx]
+			os.WriteFile(copilotPath, []byte(strings.TrimRight(before, "\n")+"\n\n"+snapRules), 0644)
+			fmt.Println("  Updated .github/copilot-instructions.md with latest snap rules")
+		} else {
 			os.WriteFile(copilotPath, append(data, []byte("\n\n"+snapRules)...), 0644)
-			fmt.Println("  Updated .github/copilot-instructions.md")
+			fmt.Println("  Appended snap rules to .github/copilot-instructions.md")
 		}
 	} else {
 		os.MkdirAll(copilotDir, 0755)
 		os.WriteFile(copilotPath, []byte(snapRules), 0644)
-		fmt.Println("  Created .github/copilot-instructions.md")
+		fmt.Println("  Created .github/copilot-instructions.md with snap rules")
 	}
+}
+
+func cmdUpdateRules() {
+	root, err := os.Getwd()
+	if err != nil {
+		fatal("get working directory: %v", err)
+	}
+
+	writeAgentInstructions(root)
+	fmt.Println("Agent instruction files updated to latest rules.")
 }
 
 func cmdSave() {
@@ -1883,6 +1915,7 @@ Maintenance:
   clean                      Analyze and remove safe-to-delete snapshots
   clean --dry-run            Show what would be removed (no changes)
   clean --auto               Remove without confirmation (for automation)
+  update-rules               Update AI agent instruction files to latest rules
 
 Time Formats (for rewind):
   "5 minutes ago"            Relative time
