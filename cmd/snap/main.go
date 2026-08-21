@@ -164,27 +164,54 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - CRITICAL: Re-check EVERY time before making changes. Never cache from earlier in the session — the user may initialize mid-conversation.
 
 ## MANDATORY WORKFLOW — follow this every single time:
-1. Before ANY file change (single or multi-file): snap save "before: <what you're about to do>"
-2. After completing a logical unit of work: snap save "after: <what you did>"
+1. Before you are about to WRITE or EDIT any project file: save a checkpoint FIRST.
+2. After completing a logical unit of work: save a checkpoint.
 3. If something breaks or goes wrong: snap restore <id>
-4. Never skip checkpoints. Never batch saves "for later". Save immediately.
 
-## When to use full save vs single-file save:
-- Touching 1-2 files → snap save-file <file> "message" (lightweight, faster)
-- Touching 3+ files or starting a risky task → snap save "message" (full project)
-- When in doubt, use full save. Cost is negligible (~2ms).
+## IMPORTANT — When to save and when NOT to save:
+Saving a checkpoint ONLY makes sense when you are about to MODIFY files (write, edit, delete, rename).
+Do NOT save a checkpoint when you are:
+- Just reading or viewing files
+- Discussing, planning, or answering questions
+- Writing to memory, notes, or non-project files
+- Running read-only commands (git status, grep, ls, etc.)
+- About to do a git commit/push (those are separate from snap)
+
+"Before any file change" means: you are about to use a tool that WRITES to a project file. If no file will be modified, no checkpoint is needed. Do not create empty/useless checkpoints — keep the timeline clean and meaningful.
+
+## CRITICAL — Choosing the right save type:
+This is NOT optional. Use the CORRECT command based on how many files you are about to change:
+
+| Files changing | Command | Example |
+|---------------|---------|---------|
+| 1 file | snap save-file <file> -m "msg" | snap save-file src/auth.go -m "before refactor" |
+| 2 files | snap save-file <file1> <file2> -m "msg" | snap save-file src/a.go src/b.go -m "before fix" |
+| 3+ files | snap save "msg" | snap save "before large refactor" |
+| Risky/unknown scope | snap save "msg" | snap save "before experimental changes" |
+
+WRONG: Using snap save (full project) when only editing 1 file — wasteful, clutters timeline.
+WRONG: Using snap save-file when editing 5+ files — might miss some files.
+RIGHT: Match the command to the scope of your change.
+
+## After finishing work:
+- Finished editing 1 file → snap save-file <file> -m "after: what you did"
+- Finished editing multiple files → snap save "after: what you did"
+- Only save "after" when you actually changed something. If you read files and decided NOT to change anything, don't save.
 
 ## Continuous recording (large refactors, risky/exploratory work):
 - Start before beginning: snap record start
 - Stop when stable: snap record stop
 - Check if active: snap record status
 - Use this when: refactoring multiple files, letting an agent work autonomously, trying experimental approaches, or any situation where many changes happen quickly.
+- When recording is active, you still save explicit checkpoints at logical milestones — recording captures everything in between.
 
 ## Restore — undo anything instantly:
 - Full project restore: snap restore <id> (auto-saves current state first — you can never lose work)
 - Single file restore: snap restore-file <id> <file> (only that file changes, everything else untouched)
 - Mix and match: restore different files from different checkpoints to assemble the best state
 - Example: snap restore-file 2 src/auth.go && snap restore-file 4 src/ui.tsx
+- When to use: something broke, wrong approach taken, want to go back to a known-good state.
+- You can always undo a restore — the current state is auto-saved before restoring.
 
 ## Diff & compare — understand what changed:
 - See what changed since last save: snap status
@@ -193,19 +220,23 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - Full line-by-line diff: snap diff <id1> <id2> -f
 - Diff a specific file between two checkpoints: snap diff <id1> <id2> <filepath>
 - View file content at any checkpoint: snap show <id> <filepath>
+- Use diff BEFORE restoring to verify what will change.
+- Use diff to review your own work before telling the user "done".
 
 ## Pin — protect important states:
 - Pin a known-good state: snap pin <id>
 - Pinned checkpoints are NEVER auto-deleted by garbage collection
 - Unpin when no longer needed: snap unpin <id>
-- Use this before: major refactors, risky migrations, handing off to another agent
+- When to pin: before major refactors, before risky migrations, when handing off to another agent, any state you might want to return to days later.
+- Don't pin everything — only truly important stable states.
 
 ## Watch — auto-protect critical files:
 - Add: snap watch add <file>
 - Remove: snap watch remove <file>
 - List: snap watch list
 - Any change to a watched file automatically creates a checkpoint
-- Use for: config files, database migrations, env files, lock files, anything dangerous to lose or hard to recover
+- Use for: config files, database migrations, env files, lock files, anything dangerous to lose or hard to recover.
+- Suggest watching when you see the user working with critical config files.
 
 ## Rewind — time travel through recorded changes:
 - Requires recording to be active (snap record start)
@@ -213,6 +244,7 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - Specific time: snap rewind "2:30 PM" or snap rewind "14:30:05"
 - Specific date: snap rewind "Aug 16 14:30"
 - View timeline: snap timeline (shows what changed, when, and whether it was you or an agent)
+- Use when: you don't know exactly when something broke, need to explore the timeline.
 
 ## Export & Import — share checkpoints:
 - Export: snap export <id> (creates portable .snap file)
@@ -220,6 +252,7 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - Export encrypted: snap export <id> -p "password" (AES-256-GCM)
 - Import: snap import <file.snap>
 - Import encrypted: snap import <file.snap> -p "password"
+- Use when: sharing state with teammate, backing up before cleanup, moving checkpoints between machines.
 
 ## Cleanup:
 - Remove old/duplicate snapshots: snap clean
@@ -227,11 +260,13 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - Auto-mode (no confirmation): snap clean --auto
 - Delete specific checkpoint: snap delete <id>
 - Automatic GC runs hourly when recording is active
+- Suggest cleanup after long sessions with 20+ checkpoints.
 
 ## All commands reference:
-- snap save "msg" — full project checkpoint
+- snap save "msg" — full project checkpoint (use for 3+ files)
 - snap save "msg" -d "description" — checkpoint with extra context
-- snap save-file <file> "msg" — single file checkpoint
+- snap save-file <file> -m "msg" — single file checkpoint (use for 1-2 files)
+- snap save-file <file1> <file2> -m "msg" — multi-file checkpoint
 - snap list — all checkpoints (organized by category)
 - snap status — what changed since last save
 - snap diff <id> — compare checkpoint vs current
@@ -251,12 +286,17 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - snap export <id> [-o file] [-p password] — export as .snap file
 - snap import <file> [-p password] — import a .snap file
 - snap clean [--dry-run] [--auto] — garbage collection
+- snap update-rules — refresh these instruction files to latest version
+- snap setup-hooks — install Claude Code auto-save hook
 
 ## Decision guide — what to do when:
 | Situation | Action |
 |-----------|--------|
-| About to edit any file | snap save or snap save-file FIRST |
-| Finished a task | snap save "after: what you did" |
+| About to edit 1-2 files | snap save-file <files> -m "before: ..." FIRST |
+| About to edit 3+ files | snap save "before: ..." FIRST |
+| Just reading/discussing/planning | Do NOT save — no checkpoint needed |
+| Finished editing | snap save or snap save-file "after: ..." |
+| Decided not to change anything | Do NOT save — nothing changed |
 | Starting risky/experimental work | snap record start + snap save + snap pin |
 | Something broke | snap restore <id> or snap restore-file <id> <file> |
 | Need to compare states | snap diff <id1> <id2> |
@@ -266,6 +306,7 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 | Long session, lots of checkpoints | snap clean --auto |
 | Before a big refactor | snap save + snap pin <id> |
 | Agent making autonomous changes | snap record start (agent activity auto-detected) |
+| Updating snap CLI version | snap update-rules (refreshes these instructions) |
 `
 
 	const snapHeader = "# Snap — Local Checkpoint"
