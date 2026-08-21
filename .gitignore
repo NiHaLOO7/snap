@@ -23,3 +23,9 @@ vscode-extension/out/
 # Test
 demo-project/
 demo-project2/
+
+# Snap (auto-generated)
+.snap
+CLAUDE.md
+.cursorrules
+.github/copilot-instructions.md

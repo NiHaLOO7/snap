@@ -162,6 +162,7 @@ Before running ANY snap command, check if .snap/ directory exists in the project
 - If it exists: use snap as described below. No skipping, no excuses.
 - If it does NOT exist: skip silently. Do NOT run snap init or ask the user to initialize.
 - CRITICAL: Re-check EVERY time before making changes. Never cache from earlier in the session — the user may initialize mid-conversation.
+- IMPORTANT: All snap commands must be run from the directory where .snap/ exists. If your working directory is a subdirectory, cd to the project root first or use absolute/relative paths from there. File paths in snap commands are relative to the .snap/ root, not your current directory.
 
 ## MANDATORY WORKFLOW — follow this every single time:
 1. Before you are about to WRITE or EDIT any project file: save a checkpoint FIRST.
