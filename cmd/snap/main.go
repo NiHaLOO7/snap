@@ -194,26 +194,18 @@ WRONG: Using snap save-file when editing 5+ files — might miss some files.
 RIGHT: Match the command to the scope of your change.
 
 ## Writing good checkpoint messages and descriptions:
-Every checkpoint should have a clear, useful message. Add a description (-d) when it adds value.
+Every checkpoint should have a clear message. Add a description (-d) when it adds value.
 
-**Message** (required): Concise, meaningful. Start with "before:" or "after:" prefix. Should tell someone scanning the timeline what this checkpoint represents.
-- Good: "before: rewrite auth middleware"
-- Good: "after: JWT validation working with refresh tokens"
-- Bad: "checkpoint" or "saving" (meaningless — provides zero context)
-
-**Description** (-d flag): Extra context that helps decide whether to restore to this point. Think of it as: "What would I want to know about this state if I'm looking at it tomorrow?"
-- What's currently working/broken
-- Which approach this represents (if trying multiple)
-- Why this state matters
-- What triggered this change
+**Message** (required): What's happening. Use "before:" or "after:" prefix so the timeline reads naturally.
+**Description** (-d flag, optional): Extra context — what's the current state, why does this matter, which approach is this. Think: "What would help me decide whether to restore here?"
 
 Examples:
   snap save "before: add Redis caching" -d "API working without cache, avg 200ms response"
   snap save "after: add Redis caching" -d "cache hit reduces to 15ms, miss unchanged"
   snap save-file src/auth.go -m "before: fix token expiry" -d "tokens expire but refresh fails silently"
-  snap save "before: try approach 2" -d "approach 1 worked but too slow, reverting to try event-driven"
+  snap save "before: try approach 2" -d "approach 1 worked but too slow, trying event-driven"
 
-Skip the description when the message alone tells the full story. Use it when future-you would benefit from the extra context.
+Don't write meaningless messages like "checkpoint" or "saving" — they add noise to the timeline.
 
 ## After finishing work:
 - Finished editing 1 file → snap save-file <file> -m "after: what you did"
