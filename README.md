@@ -996,6 +996,12 @@ snap/
 - [ ] `snap stash` — named working states for context switching
 - [ ] Snapshot export to Git commit
 
+### Future Vision
+
+**Agent-to-Agent Collaboration** — Snap checkpoints as a portable state protocol between AI agents. A coding agent exports its work as a `.snap` file, hands it to a review agent, which imports, inspects, annotates, and passes the verdict back — all without Git commits or shared filesystems. Enables multi-agent workflows (code → review → test → merge) where each agent works independently on the same codebase state.
+
+**Parallel Workspaces** — Isolated code environments where multiple agents (or the same agent) explore different approaches simultaneously. Each workspace is an independent timeline branching from a common checkpoint — agents experiment freely without interfering with each other. The user can compare results across timelines and merge the best outcome back. Think multiverse-style development: every idea gets its own reality to prove itself.
+
 ---
 
 ## License
