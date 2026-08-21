@@ -416,21 +416,61 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 | `snap export 3 -o file.snap` | Export with custom output filename |
 | `snap import file.snap` | Import a .snap file as new checkpoint |
 | `snap import file.snap -p "pass"` | Import a password-protected file |
+| `snap update-rules` | Update AI instruction files (CLAUDE.md, .cursorrules, copilot-instructions) to latest |
+| `snap setup-hooks` | Install Claude Code auto-save hook in ~/.claude/settings.json |
+| `snap init --setup-hooks` | Initialize + install Claude Code hook in one step |
 
 ---
 
 ## CLI Commands (Detailed)
 
-### `snap init`
+### `snap init [--setup-hooks]`
 
-Initialize snap in the current directory. Creates a `.snap/` folder.
+Initialize snap in the current directory. Creates a `.snap/` folder, saves initial checkpoint, and generates AI agent instruction files (CLAUDE.md, .cursorrules, .github/copilot-instructions.md).
+
+Running again on an already-initialized project repairs the structure and updates instruction files to the latest version.
 
 ```
 $ snap init
 Initialized snap in /Users/you/project/.snap/
+  Saved initial checkpoint #1 (42 files)
+  Created CLAUDE.md with snap rules
+  Created .cursorrules with snap rules
+  Created .github/copilot-instructions.md with snap rules
 
-Ready to save snapshots. Run:
-  snap save "initial state"
+  To install Claude Code auto-save hook:
+    snap setup-hooks
+
+$ snap init --setup-hooks
+# Same as above + installs Claude Code PreToolUse hook
+```
+
+---
+
+### `snap setup-hooks`
+
+Install a Claude Code PreToolUse hook that automatically saves every file before an agent edits it. Modifies `~/.claude/settings.json`. Safe to run multiple times — skips if already configured. Works on macOS, Linux, and Windows.
+
+```
+$ snap setup-hooks
+  Claude Code hook installed — auto-saves files before every agent edit ✓
+
+$ snap setup-hooks
+  Claude Code hook already configured ✓
+```
+
+---
+
+### `snap update-rules`
+
+Update AI agent instruction files (CLAUDE.md, .cursorrules, .github/copilot-instructions.md) to the latest rules without re-initializing. Use after updating the snap CLI to get the newest agent instructions.
+
+```
+$ snap update-rules
+  Updated CLAUDE.md with latest snap rules
+  Updated .cursorrules with latest snap rules
+  Updated .github/copilot-instructions.md with latest snap rules
+Agent instruction files updated to latest rules.
 ```
 
 ---
@@ -947,6 +987,10 @@ snap/
 - [x] Garbage collection (`snap clean` + automatic hourly GC)
 - [x] Auto-save before single file restore
 - [x] Export/import checkpoints as portable `.snap` files with AES-256 encryption
+- [x] `snap update-rules` — refresh AI instruction files without re-init
+- [x] `snap setup-hooks` — auto-install Claude Code PreToolUse hook (cross-platform)
+- [x] Compare file between two checkpoints (VS Code extension)
+- [x] Auto-refresh timeline on panel visibility toggle
 - [ ] `snap when` — binary search timeline to find breaking change
 - [ ] `snap stash` — named working states for context switching
 - [ ] Snapshot export to Git commit
