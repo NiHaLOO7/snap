@@ -69,6 +69,7 @@ Git is great for publishing code. But between commits, your code is unprotected.
 | Half the changes are good, half are bad | Cherry-pick specific hunks, resolve conflicts | Restore only the broken files from the good checkpoint, keep the rest |
 | Want to try 3 different approaches | 3 branches, switching context, remembering which is which | Save → try approach 1 → save → try approach 2 → save → compare all three, pick what works |
 | Undo one file but keep everything else | `git checkout -- file` only works for uncommitted. Otherwise complex. | `snap restore-file 3 src/auth.go` — done. Rest of project untouched. |
+| Share a known-good state with teammate | Create branch, push, coordinate pull/clone | `snap export 3` → send file → `snap import file.snap`. Done. |
 
 Snap is not a replacement for Git. Git is for publishing, collaborating, and version history. Snap is for the messy in-between — the 50 experiments you try before you're ready to commit.
 
