@@ -2,7 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { SnapProvider, SnapDecorationProvider, SnapshotItem, FileItem } from './snapProvider';
 import { ChangesProvider } from './changesProvider';
-import { execSnap } from './snapCli';
+import { RecordingTimelineProvider, TimelineChangeItem } from './recordingProvider';
+import { WatchProvider } from './watchProvider';
+import { execSnap, isRecording, clearTimeline } from './snapCli';
 
 class SnapContentProvider implements vscode.TextDocumentContentProvider {
     private contentMap = new Map<string, string>();
@@ -24,9 +26,37 @@ export function activate(context: vscode.ExtensionContext) {
 
     const snapProvider = new SnapProvider(workspaceRoot);
     const changesProvider = new ChangesProvider(workspaceRoot);
+    const recordingProvider = new RecordingTimelineProvider(workspaceRoot);
+    const watchProvider = new WatchProvider(workspaceRoot);
     const contentProvider = new SnapContentProvider();
     const decorationProvider = new SnapDecorationProvider();
     decorationProvider.setWorkspaceRoot(workspaceRoot);
+
+    // Status bar — recording toggle
+    const recordingStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+    recordingStatusBar.command = 'snap.recordToggle';
+    context.subscriptions.push(recordingStatusBar);
+
+    const updateRecordingStatus = () => {
+        const recording = isRecording(workspaceRoot);
+        if (recording) {
+            recordingStatusBar.text = '$(circle-filled) Snap: Recording';
+            recordingStatusBar.color = new vscode.ThemeColor('statusBarItem.errorForeground');
+            recordingStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+            recordingStatusBar.tooltip = 'Click to stop recording';
+        } else {
+            recordingStatusBar.text = '$(circle-outline) Snap: Not Recording';
+            recordingStatusBar.color = undefined;
+            recordingStatusBar.backgroundColor = undefined;
+            recordingStatusBar.tooltip = 'Click to start recording';
+        }
+        recordingStatusBar.show();
+    };
+    updateRecordingStatus();
+
+    // Refresh recording status periodically
+    const recordingTimer = setInterval(updateRecordingStatus, 5000);
+    context.subscriptions.push({ dispose: () => clearInterval(recordingTimer) });
 
     // Load snapshot trees for decoration provider
     const refreshDecorationData = async () => {
@@ -43,13 +73,18 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(treeView);
     context.subscriptions.push(vscode.window.registerFileDecorationProvider(decorationProvider));
     vscode.window.registerTreeDataProvider('snapChanges', changesProvider);
+    vscode.window.registerTreeDataProvider('snapRecordingTimeline', recordingProvider);
+    vscode.window.registerTreeDataProvider('snapWatchedFiles', watchProvider);
 
     treeView.onDidChangeVisibility(e => {
         if (e.visible) {
             snapProvider.refresh();
             changesProvider.refresh();
+            recordingProvider.refresh();
+            watchProvider.refresh();
             refreshDecorationData();
             updateBadge();
+            updateRecordingStatus();
         }
     });
 
@@ -168,7 +203,6 @@ export function activate(context: vscode.ExtensionContext) {
                 const doc = await vscode.workspace.openTextDocument(uri);
                 await vscode.window.showTextDocument(doc, { preview: true, preserveFocus: false });
 
-                // Make document readonly after opening
                 await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
             } else {
                 vscode.window.showErrorMessage(`Show failed: ${result.error}`);
@@ -290,13 +324,10 @@ export function activate(context: vscode.ExtensionContext) {
             let filePaths: string[] = [];
 
             if (uris && uris.length > 0) {
-                // Called from explorer context menu with multi-select
                 filePaths = uris.map(u => path.relative(workspaceRoot, u.fsPath));
             } else if (_uri) {
-                // Single file from explorer
                 filePaths = [path.relative(workspaceRoot, _uri.fsPath)];
             } else {
-                // Called from editor context menu or command palette
                 const editor = vscode.window.activeTextEditor;
                 if (!editor) {
                     vscode.window.showErrorMessage('No active file to save');
@@ -454,11 +485,445 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }),
 
+        // ── Recording commands ──
+
+        vscode.commands.registerCommand('snap.recordToggle', async () => {
+            const recording = isRecording(workspaceRoot);
+            if (recording) {
+                const result = await execSnap(workspaceRoot, ['record', 'stop']);
+                if (result.success) {
+                    vscode.window.showInformationMessage('Recording stopped');
+                } else {
+                    vscode.window.showErrorMessage(`Stop failed: ${result.error}`);
+                }
+            } else {
+                const result = await execSnap(workspaceRoot, ['record', 'start']);
+                if (result.success) {
+                    vscode.window.showInformationMessage('Recording started — all file changes are being tracked');
+                } else {
+                    vscode.window.showErrorMessage(`Start failed: ${result.error}`);
+                }
+            }
+            updateRecordingStatus();
+            recordingProvider.refresh();
+        }),
+
+        vscode.commands.registerCommand('snap.recordStart', async () => {
+            const result = await execSnap(workspaceRoot, ['record', 'start']);
+            if (result.success) {
+                vscode.window.showInformationMessage('Recording started');
+            } else {
+                vscode.window.showErrorMessage(`Start failed: ${result.error}`);
+            }
+            updateRecordingStatus();
+            recordingProvider.refresh();
+        }),
+
+        vscode.commands.registerCommand('snap.recordStop', async () => {
+            const result = await execSnap(workspaceRoot, ['record', 'stop']);
+            if (result.success) {
+                vscode.window.showInformationMessage('Recording stopped');
+            } else {
+                vscode.window.showErrorMessage(`Stop failed: ${result.error}`);
+            }
+            updateRecordingStatus();
+            recordingProvider.refresh();
+        }),
+
+        // ── Rewind ──
+
+        vscode.commands.registerCommand('snap.rewind', async () => {
+            const options = [
+                { label: '1 minute ago', value: '1 minute ago' },
+                { label: '5 minutes ago', value: '5 minutes ago' },
+                { label: '15 minutes ago', value: '15 minutes ago' },
+                { label: '30 minutes ago', value: '30 minutes ago' },
+                { label: '1 hour ago', value: '1 hour ago' },
+                { label: 'Custom time...', value: '__custom__' },
+            ];
+
+            const picked = await vscode.window.showQuickPick(options, {
+                placeHolder: 'Rewind to...',
+            });
+
+            if (!picked) { return; }
+
+            let timeStr = picked.value;
+            if (timeStr === '__custom__') {
+                const custom = await vscode.window.showInputBox({
+                    prompt: 'Enter time (e.g., "14:30", "2:47 PM", "10 minutes ago")',
+                    placeHolder: '14:30',
+                });
+                if (!custom) { return; }
+                timeStr = custom;
+            }
+
+            const confirm = await vscode.window.showWarningMessage(
+                `Rewind to "${timeStr}"? Current state will be auto-saved first.`,
+                'Rewind',
+                'Cancel'
+            );
+
+            if (confirm !== 'Rewind') { return; }
+
+            const result = await execSnap(workspaceRoot, ['rewind', timeStr]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Rewound to ${timeStr}`);
+                snapProvider.refresh();
+                changesProvider.refresh();
+                refreshDecorationData();
+                updateBadge();
+            } else {
+                vscode.window.showErrorMessage(`Rewind failed: ${result.error}`);
+            }
+        }),
+
+        // ── Timeline change actions ──
+
+        vscode.commands.registerCommand('snap.diffTimelineChange', async (item: TimelineChangeItem) => {
+            const fs = await import('fs');
+            const change = item.change;
+
+            if (!change.newHash) {
+                vscode.window.showInformationMessage('No content available for this change.');
+                return;
+            }
+
+            // Read the object content via snap CLI by finding a snapshot that has this hash
+            // Simpler: read the object directly from the store
+            const objectPath = path.join(workspaceRoot, '.snap', 'objects', change.newHash.substring(0, 2), change.newHash.substring(2));
+
+            if (!fs.existsSync(objectPath)) {
+                vscode.window.showErrorMessage('Object not found in store.');
+                return;
+            }
+
+            const zlib = await import('zlib');
+            const compressed = fs.readFileSync(objectPath);
+            const content = zlib.inflateSync(compressed).toString();
+
+            const time = new Date(change.timestamp);
+            const timeStr = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+            const snapshotUri = vscode.Uri.parse(`snap://timeline/${timeStr}/${change.path}?ts=${Date.now()}`);
+            contentProvider.setContent(snapshotUri.toString(), content);
+
+            const currentFilePath = path.join(workspaceRoot, change.path);
+            if (fs.existsSync(currentFilePath)) {
+                const currentUri = vscode.Uri.file(currentFilePath);
+                await vscode.commands.executeCommand(
+                    'vscode.diff',
+                    snapshotUri,
+                    currentUri,
+                    `${timeStr} ↔ Current: ${path.basename(change.path)}`,
+                    { renderSideBySide: true }
+                );
+            } else {
+                const doc = await vscode.workspace.openTextDocument(snapshotUri);
+                await vscode.window.showTextDocument(doc, { preview: true });
+                await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.showTimelineFile', async (item: TimelineChangeItem) => {
+            const fs = await import('fs');
+            const zlib = await import('zlib');
+            const change = item.change;
+
+            if (!change.newHash) {
+                vscode.window.showInformationMessage('No content available (file was deleted).');
+                return;
+            }
+
+            const objectPath = path.join(workspaceRoot, '.snap', 'objects', change.newHash.substring(0, 2), change.newHash.substring(2));
+            if (!fs.existsSync(objectPath)) {
+                vscode.window.showErrorMessage('Object not found in store.');
+                return;
+            }
+
+            const compressed = fs.readFileSync(objectPath);
+            const content = zlib.inflateSync(compressed).toString();
+
+            const time = new Date(change.timestamp);
+            const timeStr = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+            const uri = vscode.Uri.parse(`snap://timeline-show/${timeStr}/${change.path}?ts=${Date.now()}`);
+            contentProvider.setContent(uri.toString(), content);
+
+            const doc = await vscode.workspace.openTextDocument(uri);
+            await vscode.window.showTextDocument(doc, { preview: true });
+            await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
+        }),
+
+        vscode.commands.registerCommand('snap.diffTimelinePrevious', async (item: TimelineChangeItem) => {
+            const fs = await import('fs');
+            const zlib = await import('zlib');
+            const change = item.change;
+
+            const readObject = (hash: string): string | null => {
+                const objPath = path.join(workspaceRoot, '.snap', 'objects', hash.substring(0, 2), hash.substring(2));
+                if (!fs.existsSync(objPath)) { return null; }
+                const compressed = fs.readFileSync(objPath);
+                return zlib.inflateSync(compressed).toString();
+            };
+
+            const time = new Date(change.timestamp);
+            const timeStr = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+            if (change.oldHash && change.newHash) {
+                const oldContent = readObject(change.oldHash);
+                const newContent = readObject(change.newHash);
+
+                if (oldContent === null || newContent === null) {
+                    vscode.window.showErrorMessage('Could not read object from store.');
+                    return;
+                }
+
+                const uriOld = vscode.Uri.parse(`snap://timeline-old/${timeStr}/${change.path}?ts=${Date.now()}`);
+                const uriNew = vscode.Uri.parse(`snap://timeline-new/${timeStr}/${change.path}?ts=${Date.now()}`);
+                contentProvider.setContent(uriOld.toString(), oldContent);
+                contentProvider.setContent(uriNew.toString(), newContent);
+
+                await vscode.commands.executeCommand(
+                    'vscode.diff',
+                    uriOld,
+                    uriNew,
+                    `Before ↔ After (${timeStr}): ${path.basename(change.path)}`,
+                    { renderSideBySide: true }
+                );
+            } else if (change.newHash) {
+                const content = readObject(change.newHash);
+                if (content === null) {
+                    vscode.window.showErrorMessage('Could not read object from store.');
+                    return;
+                }
+                const uri = vscode.Uri.parse(`snap://timeline-created/${timeStr}/${change.path}?ts=${Date.now()}`);
+                contentProvider.setContent(uri.toString(), content);
+                const doc = await vscode.workspace.openTextDocument(uri);
+                await vscode.window.showTextDocument(doc, { preview: true });
+                await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
+            } else {
+                vscode.window.showInformationMessage('No previous version available.');
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.restoreTimelineFile', async (item: TimelineChangeItem) => {
+            const fs = await import('fs');
+            const zlib = await import('zlib');
+            const change = item.change;
+
+            if (!change.newHash) {
+                vscode.window.showInformationMessage('Cannot restore a deleted file from timeline.');
+                return;
+            }
+
+            const confirm = await vscode.window.showWarningMessage(
+                `Restore ${change.path} to its state at this point in the timeline?`,
+                'Restore',
+                'Cancel'
+            );
+
+            if (confirm !== 'Restore') { return; }
+
+            const objectPath = path.join(workspaceRoot, '.snap', 'objects', change.newHash.substring(0, 2), change.newHash.substring(2));
+            if (!fs.existsSync(objectPath)) {
+                vscode.window.showErrorMessage('Object not found in store.');
+                return;
+            }
+
+            const compressed = fs.readFileSync(objectPath);
+            const content = zlib.inflateSync(compressed);
+
+            const fullPath = path.join(workspaceRoot, change.path);
+            const dir = path.dirname(fullPath);
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(fullPath, content);
+
+            vscode.window.showInformationMessage(`Restored ${change.path}`);
+            changesProvider.refresh();
+            decorationProvider.refresh();
+            updateBadge();
+        }),
+
+        // ── Watch commands ──
+
+        vscode.commands.registerCommand('snap.watchFile', async (_uri?: vscode.Uri) => {
+            let filePath: string | undefined;
+
+            if (_uri) {
+                filePath = path.relative(workspaceRoot, _uri.fsPath);
+            } else {
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    filePath = path.relative(workspaceRoot, editor.document.uri.fsPath);
+                }
+            }
+
+            if (!filePath) {
+                filePath = await vscode.window.showInputBox({
+                    prompt: 'File path to watch',
+                    placeHolder: 'e.g., config/config.go',
+                });
+            }
+
+            if (!filePath) { return; }
+
+            const result = await execSnap(workspaceRoot, ['watch', filePath]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Watching: ${filePath}`);
+                watchProvider.refresh();
+            } else {
+                vscode.window.showErrorMessage(`Watch failed: ${result.error}`);
+            }
+        }),
+
+        vscode.commands.registerCommand('snap.unwatchFile', async (item?: any) => {
+            let filePath: string | undefined;
+
+            if (item && item.filePath) {
+                filePath = item.filePath;
+            } else {
+                const { getWatchlist } = await import('./snapCli');
+                const files = await getWatchlist(workspaceRoot);
+                if (files.length === 0) {
+                    vscode.window.showInformationMessage('No files being watched.');
+                    return;
+                }
+
+                const picked = await vscode.window.showQuickPick(
+                    files.map(f => ({ label: f })),
+                    { placeHolder: 'Select file to unwatch' }
+                );
+                if (!picked) { return; }
+                filePath = picked.label;
+            }
+
+            if (!filePath) { return; }
+
+            const result = await execSnap(workspaceRoot, ['watch', 'rm', filePath]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Unwatched: ${filePath}`);
+                watchProvider.refresh();
+            } else {
+                vscode.window.showErrorMessage(`Unwatch failed: ${result.error}`);
+            }
+        }),
+
+        // ── Clean ──
+
+        vscode.commands.registerCommand('snap.clean', async () => {
+            const dryRun = await execSnap(workspaceRoot, ['clean', '--dry-run']);
+            if (!dryRun.success) {
+                vscode.window.showErrorMessage(`Clean analysis failed: ${dryRun.error}`);
+                return;
+            }
+
+            const lines = dryRun.output.split('\n');
+            const removeLine = lines.find(l => l.includes('Safe to remove'));
+            const spaceLine = lines.find(l => l.includes('Space to free'));
+
+            const removeCount = removeLine?.match(/(\d+)/)?.[1] || '0';
+            const space = spaceLine?.match(/:\s+(.+)/)?.[1]?.trim() || '0 B';
+
+            if (removeCount === '0') {
+                vscode.window.showInformationMessage('Already clean — nothing to remove.');
+                return;
+            }
+
+            const action = await vscode.window.showInformationMessage(
+                `Snap Clean: ${removeCount} snapshots safe to remove. Free ${space}.`,
+                'Clean Now',
+                'Show Details',
+                'Cancel'
+            );
+
+            if (action === 'Show Details') {
+                const outputChannel = vscode.window.createOutputChannel('Snap Clean');
+                outputChannel.append(dryRun.output);
+                outputChannel.show();
+                return;
+            }
+
+            if (action !== 'Clean Now') { return; }
+
+            const result = await execSnap(workspaceRoot, ['clean', '--auto']);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Cleaned: freed ${space}`);
+                snapProvider.refresh();
+                refreshDecorationData();
+                updateBadge();
+            } else {
+                vscode.window.showErrorMessage(`Clean failed: ${result.error}`);
+            }
+        }),
+
+        // ── Clear Timeline ──
+
+        vscode.commands.registerCommand('snap.clearTimeline', async () => {
+            const confirm = await vscode.window.showWarningMessage(
+                'Clear all recording timeline data? This cannot be undone.',
+                'Clear',
+                'Cancel'
+            );
+
+            if (confirm !== 'Clear') { return; }
+
+            const success = await clearTimeline(workspaceRoot);
+            if (success) {
+                vscode.window.showInformationMessage('Recording timeline cleared.');
+                recordingProvider.refresh();
+            } else {
+                vscode.window.showErrorMessage('Failed to clear timeline.');
+            }
+        }),
+
+        // ── Save Timeline Entry as Checkpoint ──
+
+        vscode.commands.registerCommand('snap.saveTimelineAsCheckpoint', async (item: TimelineChangeItem) => {
+            const change = item.change;
+            if (!change.newHash) {
+                vscode.window.showInformationMessage('Cannot save a delete entry as checkpoint.');
+                return;
+            }
+
+            const time = new Date(change.timestamp);
+            const timeStr = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+            const message = await vscode.window.showInputBox({
+                prompt: 'Checkpoint message',
+                value: `${change.path} at ${timeStr}`,
+            });
+
+            if (message === undefined) { return; }
+
+            const result = await execSnap(workspaceRoot, ['save-file', change.path, '-m', message || `timeline: ${change.path} at ${timeStr}`]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Saved as checkpoint: ${change.path}`);
+                snapProvider.refresh();
+                updateBadge();
+            } else {
+                vscode.window.showErrorMessage(`Save failed: ${result.error}`);
+            }
+        }),
+
+        // ── Refresh ──
+
         vscode.commands.registerCommand('snap.refresh', () => {
             snapProvider.refresh();
             changesProvider.refresh();
+            recordingProvider.refresh();
+            watchProvider.refresh();
             refreshDecorationData();
             updateBadge();
+            updateRecordingStatus();
+        }),
+
+        vscode.commands.registerCommand('snap.refreshTimeline', () => {
+            recordingProvider.refresh();
+        }),
+
+        vscode.commands.registerCommand('snap.refreshWatch', () => {
+            watchProvider.refresh();
         })
     );
 
@@ -473,6 +938,9 @@ export function activate(context: vscode.ExtensionContext) {
             changesProvider.refresh();
             decorationProvider.refresh();
             updateBadge();
+            if (isRecording(workspaceRoot)) {
+                recordingProvider.refresh();
+            }
         }, 2000);
     };
 

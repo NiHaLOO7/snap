@@ -73,6 +73,118 @@ export async function getSnapshots(workspaceRoot: string): Promise<SnapshotInfo[
     return snapshots;
 }
 
+export interface TimelineChange {
+    timestamp: string;
+    path: string;
+    action: string;
+    oldHash: string;
+    newHash: string;
+    fullSize: number;
+    isAgent: boolean;
+}
+
+export async function getTimelineChanges(workspaceRoot: string): Promise<TimelineChange[]> {
+    const pathMod = await import('path');
+    const fs = await import('fs');
+    const zlib = await import('zlib');
+
+    const timelineDir = pathMod.join(workspaceRoot, '.snap', 'timeline');
+    if (!fs.existsSync(timelineDir)) {
+        return [];
+    }
+
+    const segments = fs.readdirSync(timelineDir)
+        .filter((f: string) => f.endsWith('.seg'))
+        .sort();
+
+    const allChanges: TimelineChange[] = [];
+
+    for (const seg of segments) {
+        try {
+            const compressed = fs.readFileSync(pathMod.join(timelineDir, seg));
+            const data = zlib.inflateSync(compressed);
+            const changes: any[] = JSON.parse(data.toString());
+            for (const c of changes) {
+                allChanges.push({
+                    timestamp: c.ts,
+                    path: c.path,
+                    action: c.action,
+                    oldHash: c.old_hash || '',
+                    newHash: c.new_hash || '',
+                    fullSize: c.full_size || 0,
+                    isAgent: c.is_agent || false,
+                });
+            }
+        } catch {
+            continue;
+        }
+    }
+
+    allChanges.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    // Detect agent bursts (5+ changes in 3 seconds)
+    for (let i = 0; i < allChanges.length; i++) {
+        let count = 1;
+        const startTime = new Date(allChanges[i].timestamp).getTime();
+        for (let j = i + 1; j < allChanges.length; j++) {
+            if (new Date(allChanges[j].timestamp).getTime() - startTime <= 3000) {
+                count++;
+            } else {
+                break;
+            }
+        }
+        if (count >= 5) {
+            for (let j = i; j < i + count && j < allChanges.length; j++) {
+                allChanges[j].isAgent = true;
+            }
+        }
+    }
+
+    return allChanges;
+}
+
+export function isRecording(workspaceRoot: string): boolean {
+    const pathMod = require('path');
+    const fs = require('fs');
+    const pidPath = pathMod.join(workspaceRoot, '.snap', 'recorder.pid');
+    return fs.existsSync(pidPath);
+}
+
+export async function getWatchlist(workspaceRoot: string): Promise<string[]> {
+    const pathMod = await import('path');
+    const fs = await import('fs');
+    const watchFile = pathMod.join(workspaceRoot, '.snap', 'watchlist.json');
+    if (!fs.existsSync(watchFile)) {
+        return [];
+    }
+    try {
+        const data = fs.readFileSync(watchFile, 'utf-8');
+        return JSON.parse(data);
+    } catch {
+        return [];
+    }
+}
+
+export async function clearTimeline(workspaceRoot: string): Promise<boolean> {
+    const pathMod = await import('path');
+    const fs = await import('fs');
+    const timelineDir = pathMod.join(workspaceRoot, '.snap', 'timeline');
+    if (!fs.existsSync(timelineDir)) {
+        return true;
+    }
+    try {
+        const entries = fs.readdirSync(timelineDir);
+        for (const entry of entries) {
+            if (entry.endsWith('.seg')) {
+                fs.unlinkSync(pathMod.join(timelineDir, entry));
+            }
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 export async function getStatus(workspaceRoot: string): Promise<string[]> {
     const result = await execSnap(workspaceRoot, ['status']);
     if (!result.success) {
