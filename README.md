@@ -1,8 +1,8 @@
 # Snap — Local Development Checkpoints
 
-A fast, local checkpoint tool for developers. Save your project state instantly, diff between any two points, and restore safely — without needing Git commits.
+A fast, local checkpoint tool for developers. Save your project state instantly, diff between any two points, restore safely, and **search across every checkpoint** — without needing Git commits.
 
-Built for the AI-assisted development workflow where you make experimental changes, hand control to agents, and need a safety net that's faster than `git commit`.
+Built for the AI-assisted development workflow where you make experimental changes, hand control to agents, and need a safety net that's faster than `git commit`. Deleted a function last week? `snap grep "funcName"` finds it instantly across all checkpoints. Lost a file? `snap search "auth"` locates it in seconds.
 
 ![Snap Extension — File decorations showing Modified (M) and Deleted (D) status](.assets/file-decorations.jpg)
 
@@ -71,6 +71,8 @@ Git is great for publishing code. But between commits, your code is unprotected.
 | Want to try 3 different approaches | 3 branches, switching context, remembering which is which | Save → try approach 1 → save → try approach 2 → save → compare all three, pick what works |
 | Undo one file but keep everything else | `git checkout -- file` only works for uncommitted. Otherwise complex. | `snap restore-file 3 src/auth.go` — done. Rest of project untouched. |
 | Share a known-good state with teammate | Create branch, push, coordinate pull/clone | `snap export 3` → send file → `snap import file.snap`. Done. |
+| Find deleted code or file | `git log -p --all -S 'funcName'` — slow, noisy, hard to read | `snap grep "funcName"` — instant, searches all checkpoints, shows exact line |
+| Find a file that was renamed/deleted | `git log --diff-filter=D -- '**/auth*'` — need to know the exact path pattern | `snap search "auth"` — finds it across all checkpoints by substring |
 
 Snap is not a replacement for Git. Git is for publishing, collaborating, and version history. Snap is for the messy in-between — the 50 experiments you try before you're ready to commit.
 
@@ -83,6 +85,8 @@ Snap is not a replacement for Git. Git is for publishing, collaborating, and ver
 - **No cleanup needed.** No stale experiment branches to delete later. No "WIP" commits cluttering your log. Snap checkpoints live locally and clean themselves up.
 - **Zero mental overhead.** You don't have to plan when to save. Save early, save often. It costs nothing. If you forget, the auto-save and recording systems have your back.
 - **Skip the investigation.** Instead of reading through 20 changed files to find what broke, just diff two checkpoints and see exactly what's different. Or restore file by file until you find the one that broke things.
+- **Find deleted code instantly.** Deleted a function last week and need it back? `snap grep "funcName"` searches every checkpoint and shows you exactly where it was — file, line number, content. No digging through Git history.
+- **Find renamed or removed files.** `snap search "auth"` finds any file matching that name across all checkpoints. If it existed at any point, you'll find it.
 
 ---
 
@@ -323,7 +327,7 @@ The Snap panel will now show your checkpoints. Done — you're ready to use Snap
 
 ## Using the VS Code Extension
 
-Once installed, a bookmark icon appears in your left activity bar. Click it to open the Snap panel with two sections:
+Once installed, a bookmark icon appears in your left activity bar. Click it to open the Snap panel with four sections:
 
 ### Timeline Panel (top)
 
@@ -333,6 +337,10 @@ Shows all your checkpoints organized into three categories:
 - **Auto-saves** — automatic saves created by the system (before restores, before agent edits, etc.)
 
 Each checkpoint shows: ID number, message, date & time, and file count.
+
+### Search Panel
+
+Search across every checkpoint — not just the latest. Three modes: **Checkpoints** (filter by message/description), **Files** (find files by name), and **Content** (grep inside file contents). Toggle case sensitivity and regex from the search bar. Switch between grouped view (organized by checkpoint) and flat view (deduplicated with checkpoint tags). This is something Git makes extremely hard — in Snap, it's a single search bar.
 
 ### Activity Bar Badge
 
@@ -385,6 +393,12 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 **14. Export a checkpoint:** Right-click any checkpoint in the Timeline → "Export". Optionally set a password for AES-256 encryption → choose save location → get a portable `.snap` file containing the full checkpoint (metadata + all blobs + integrity checksum).
 
 **15. Import a checkpoint:** `Cmd+Shift+P` → "Snap: Import Checkpoint" → browse to a `.snap` file → enter password if encrypted → done. New checkpoint appears in timeline as `[imported]`, ready to diff/restore like any other checkpoint.
+
+**16. Search across all checkpoints:** The Search panel (below Timeline) has three modes:
+- **Checkpoints** — type a keyword to filter checkpoints by message or description. Results render exactly like the main timeline — folder tree, codicon icons, M/D badges, collapsible folders.
+- **Files** — search file names across every checkpoint. Grouped by checkpoint, or click the tree toggle to flatten — flat mode deduplicates and shows checkpoint tags so you know which snapshots contain each file.
+- **Content** — search inside file contents across all checkpoints. Three-level grouping: checkpoint → file → matching lines with highlighted matches. Flat mode groups by file with checkpoint tags.
+- Toggle **case sensitivity** (Aa) and **regex** (.*) directly from the search bar. All three modes respect both toggles.
 
 ---
 
@@ -1012,8 +1026,9 @@ snap/
 - **Hashing:** SHA-256 (`crypto/sha256`)
 - **Compression:** zlib (`compress/zlib`)
 - **Diff:** LCS-based algorithm
+- **Search:** Substring scoring for file names, content grep with hash-dedup (each unique file version scanned once across all checkpoints), extension-based binary detection
 - **File Watching:** fsnotify
-- **Extension:** TypeScript, VS Code API
+- **Extension:** TypeScript, VS Code WebviewView API, @vscode/codicons
 - **Storage:** File-based, content-addressed
 
 ---
