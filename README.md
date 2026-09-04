@@ -42,6 +42,7 @@ Built for the AI-assisted development workflow where you make experimental chang
 - [Mix and Match Restores](#mix-and-match--restore-different-files-from-different-checkpoints)
 - [AI Agent Integration](#ai-agents-automatically-use-it)
 - [All Features](#all-features)
+- [Search Across Checkpoints](#search-across-checkpoints)
 - [Export & Import](#export--import-checkpoints)
 - [Installation](#installation)
   - [CLI Installation](#step-1--install-the-cli)
@@ -209,6 +210,15 @@ Remove any checkpoint you no longer need. Simple, immediate, with a confirmation
 ### .snapignore — Exclude Files
 Create a `.snapignore` file to tell Snap which files and folders to skip — like `node_modules`, build folders, `.env` files, or anything else you don't want in your checkpoints. Comes with sensible defaults out of the box. Changes take effect immediately without restarting.
 
+### Search File Names Across All Checkpoints
+Find a file by name across every checkpoint — not just the latest. If a file was deleted, renamed, or existed only briefly, search will find it. Case-sensitive and case-insensitive matching. Results show which checkpoint each file belongs to.
+
+### Grep File Contents Across All Checkpoints
+Search for code, text, or patterns inside every file across all checkpoints. If a function existed in checkpoint #2 but was removed by checkpoint #5, grep will find it in #2. Supports plain text and regex. Skips binary files automatically (images, PDFs, archives, compiled objects). Content-addressed dedup means each unique file version is scanned only once — even if it appears in 20 checkpoints.
+
+### VS Code Search Panel
+The VS Code extension includes a built-in search panel with three modes — Checkpoints (search by message/description), Files (search file names), and Content (search inside files). All modes search across every checkpoint. Toggle case sensitivity (Aa) and regex (.*) from the search bar. Results render with native VS Code icons and file status badges (M/D). Group or flatten results with a single click — flat mode shows which checkpoints contain each match.
+
 ### Separate from Git
 Snap doesn't touch your Git history. It's a completely independent system. Your commit history stays clean while you checkpoint as often as you want. No stale branches, no WIP commits, no clutter.
 
@@ -242,8 +252,8 @@ No security warnings, no quarantine issues. Works on both Apple Silicon and Inte
 **macOS (Manual — from .pkg installer):**
 
 Download from [Releases](https://github.com/NiHaLOO7/snap/releases):
-- Apple Silicon (M1/M2/M3/M4) → `Snap-1.0.0-mac-arm64.pkg`
-- Intel Mac → `Snap-1.0.0-mac-intel.pkg`
+- Apple Silicon (M1/M2/M3/M4) → `Snap-1.2.0-mac-arm64.pkg`
+- Intel Mac → `Snap-1.2.0-mac-intel.pkg`
 
 Double-click the `.pkg` file and follow the installer.
 
@@ -252,7 +262,7 @@ Double-click the `.pkg` file and follow the installer.
 **macOS (Manual — binary):**
 
 ```bash
-curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-darwin-arm64 -o snap
+curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.2.0/snap-darwin-arm64 -o snap
 chmod +x snap
 xattr -d com.apple.quarantine snap
 sudo mv snap /usr/local/bin/snap
@@ -261,7 +271,7 @@ sudo mv snap /usr/local/bin/snap
 **Linux:**
 
 ```bash
-curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.0.0/snap-linux-amd64 -o snap
+curl -L https://github.com/NiHaLOO7/snap/releases/download/v1.2.0/snap-linux-amd64 -o snap
 chmod +x snap
 sudo mv snap /usr/local/bin/snap
 ```
@@ -279,13 +289,13 @@ sudo mv snap /usr/local/bin/snap
 
 **Download the extension:**
 
-Download `snap-checkpoints-1.1.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
+Download `snap-checkpoints-1.3.0.vsix` from the [Releases](https://github.com/NiHaLOO7/snap/releases) page.
 
 **Install in VS Code:**
 
 Option A — Terminal:
 ```bash
-code --install-extension snap-checkpoints-1.1.0.vsix
+code --install-extension snap-checkpoints-1.3.0.vsix
 ```
 
 Option B — VS Code UI:
@@ -417,6 +427,12 @@ Shows files that changed since your last checkpoint — auto-refreshes in real-t
 | `snap export 3 -o file.snap` | Export with custom output filename |
 | `snap import file.snap` | Import a .snap file as new checkpoint |
 | `snap import file.snap -p "pass"` | Import a password-protected file |
+| `snap search "auth"` | Search file names across all checkpoints |
+| `snap search "auth" --json` | Search with JSON output |
+| `snap grep "validateToken"` | Search file contents across all checkpoints |
+| `snap grep "TODO" -i` | Case-insensitive content search |
+| `snap grep "func\s+Test" --regex` | Regex content search |
+| `snap grep "pattern" --json` | Content search with JSON output |
 | `snap update-rules` | Update AI instruction files (CLAUDE.md, .cursorrules, copilot-instructions) to latest |
 | `snap setup-hooks` | Install Claude Code auto-save hook in ~/.claude/settings.json |
 | `snap init --setup-hooks` | Initialize + install Claude Code hook in one step |
@@ -849,6 +865,63 @@ Export and import are also available from the extension:
 
 ---
 
+## Search Across Checkpoints
+
+Search file names and file contents across every checkpoint — not just the latest. Powerful for recovering deleted code, finding renamed files, and locating when something changed.
+
+### `snap search <query> [--json]`
+
+Search file names across all checkpoints. Finds files that were deleted, renamed, or existed in earlier checkpoints.
+
+```bash
+# Find a file by name
+$ snap search auth
+Checkpoint #2 "before refactor" (Aug 11 10:30)
+  src/auth/middleware.go
+  src/auth/jwt.go
+
+Checkpoint #5 "after rewrite" (Aug 11 14:15)
+  src/auth.go
+
+# JSON output for scripting
+$ snap search auth --json
+```
+
+### `snap grep <pattern> [-i] [--regex] [--json]`
+
+Search file contents across all checkpoints. Deduplicates by content hash — each unique file version is scanned only once, even if it appears in 20 checkpoints.
+
+```bash
+# Find code that was removed
+$ snap grep "validateToken"
+Checkpoint #2 — src/auth/jwt.go
+  Line 42:   func validateToken(token string) (*Claims, error) {
+  Line 58:   // validateToken checks expiry and signature
+
+# Case-insensitive search
+$ snap grep "TODO" -i
+
+# Regex search
+$ snap grep "func\s+Test.*\(t \*testing\.T\)" --regex
+
+# JSON output for scripting
+$ snap grep "validateToken" --json
+```
+
+**Binary files are automatically skipped** — images, PDFs, archives, compiled objects, fonts, and more are detected by extension and excluded from content search.
+
+### VS Code Extension
+
+The extension includes a dedicated search panel with three modes:
+
+- **Checkpoints** — search by checkpoint message or description. Results render exactly like the main checkpoint tree (folder hierarchy, codicon icons, M/D status badges, collapsible folders).
+- **Files** — search file names across all checkpoints. Grouped by checkpoint, or flattened with checkpoint tags showing which snapshots contain each file.
+- **Content** — search file contents. Three-level grouping: checkpoint → file → matching lines with highlighted matches. Flat mode groups by file with checkpoint tags.
+
+Toggle case sensitivity (Aa) and regex (.*) directly from the search bar. Group/flatten results with the tree toggle button.
+
+---
+
 ## .snapignore
 
 Create a `.snapignore` file in your project root to exclude files/directories:
@@ -922,12 +995,14 @@ snap/
 │   ├── diff/diff.go              # Tree comparison + LCS line diff
 │   ├── ignore/ignore.go          # .snapignore pattern matching (live reload)
 │   ├── delta/delta.go            # Timeline recording storage engine
+│   ├── search/search.go          # File name + content search across checkpoints
 │   └── recorder/recorder.go     # File watcher daemon (fsnotify)
 ├── vscode-extension/
 │   ├── src/extension.ts          # Extension activation, commands
 │   ├── src/snapProvider.ts       # Timeline tree view (categories + files)
+│   ├── src/searchViewProvider.ts  # Search panel (checkpoints/files/content)
 │   ├── src/changesProvider.ts    # Changed files panel
-│   └── src/snapCli.ts            # CLI wrapper for extension
+│   └── src/snapCli.ts            # CLI wrapper + search functions
 ├── Makefile                      # Cross-platform build targets
 └── README.md
 ```
@@ -992,6 +1067,11 @@ snap/
 - [x] `snap setup-hooks` — auto-install Claude Code PreToolUse hook (cross-platform)
 - [x] Compare file between two checkpoints (VS Code extension)
 - [x] Auto-refresh timeline on panel visibility toggle
+- [x] `snap search` — search file names across all checkpoints
+- [x] `snap grep` — search file contents across all checkpoints (plain text + regex)
+- [x] VS Code search panel (Checkpoints / Files / Content modes with group/flat toggle)
+- [x] Binary file detection and skip in content search
+- [x] Content-addressed dedup in grep (unique hash = scan once)
 - [ ] `snap when` — binary search timeline to find breaking change
 - [ ] `snap stash` — named working states for context switching
 - [ ] Snapshot export to Git commit

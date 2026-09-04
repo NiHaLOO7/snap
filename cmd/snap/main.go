@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-const version = "1.1.0"
+const version = "1.2.0"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -52,6 +52,10 @@ func main() {
 		cmdRewind()
 	case "timeline":
 		cmdTimeline()
+	case "search":
+		cmdSearch()
+	case "grep":
+		cmdGrep()
 	case "update-rules":
 		cmdUpdateRules()
 	case "setup-hooks":
@@ -91,6 +95,14 @@ Checkpoints:
   save-file <file> [msg]     Save checkpoint of a single file
   restore-file <id> <file>   Restore a single file from any snapshot
   status                     Show changes since last snapshot
+
+Search:
+  search <query>             Fuzzy search files by name across snapshots
+  search <query> --json      Output results as JSON
+  grep <pattern>             Search file contents across snapshots
+  grep <pattern> --regex     Use regex pattern matching
+  grep <pattern> -i          Case-insensitive search
+  grep <pattern> --json      Output results as JSON
 
 Continuous Recording:
   record start               Start recording all file changes

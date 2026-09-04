@@ -2,7 +2,7 @@
   "name": "snap-checkpoints",
   "displayName": "Snap - Local Checkpoints",
   "description": "Local development checkpoint tool — save, diff, and restore your code instantly without Git commits",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "nihalkumar",
   "engines": {
     "vscode": "^1.80.0"
@@ -21,7 +21,10 @@
     "local",
     "recording",
     "timeline",
-    "rewind"
+    "rewind",
+    "search",
+    "grep",
+    "fuzzy"
   ],
   "activationEvents": [
     "workspaceContains:.snap"
@@ -187,12 +190,14 @@
     "views": {
       "snap-explorer": [
         {
-          "id": "snapTimeline",
-          "name": "Checkpoints"
+          "id": "snapSearch",
+          "name": "Search",
+          "type": "webview",
+          "visibility": "collapsed"
         },
         {
-          "id": "snapChanges",
-          "name": "Changes Since Last Snapshot"
+          "id": "snapTimeline",
+          "name": "Checkpoints"
         },
         {
           "id": "snapRecordingTimeline",
@@ -201,6 +206,10 @@
         {
           "id": "snapWatchedFiles",
           "name": "Watched Files"
+        },
+        {
+          "id": "snapChanges",
+          "name": "Changes Since Last Snapshot"
         }
       ]
     },
@@ -425,5 +434,8 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.80.0",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.46-24"
   }
 }

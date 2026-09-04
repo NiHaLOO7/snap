@@ -15,6 +15,7 @@ import (
 	"github.com/nihalkumar/snap/internal/delta"
 	"github.com/nihalkumar/snap/internal/diff"
 	"github.com/nihalkumar/snap/internal/recorder"
+	"github.com/nihalkumar/snap/internal/search"
 	"github.com/nihalkumar/snap/internal/snapshot"
 	"github.com/nihalkumar/snap/internal/store"
 )
@@ -1134,6 +1135,139 @@ func cmdUpdateRules() {
 
 	writeAgentInstructions(root)
 	fmt.Println("Agent instruction files updated to latest rules.")
+}
+
+func cmdSearch() {
+	_ = requireInit()
+
+	if len(os.Args) < 3 {
+		fatal("usage: snap search <query> [--json]")
+	}
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+
+	var queryParts []string
+	jsonOutput := false
+
+	for i := 2; i < len(os.Args); i++ {
+		if os.Args[i] == "--json" {
+			jsonOutput = true
+		} else {
+			queryParts = append(queryParts, os.Args[i])
+		}
+	}
+
+	query := strings.Join(queryParts, " ")
+	if query == "" {
+		fatal("usage: snap search <query> [--json]")
+	}
+
+	results, err := search.SearchFiles(snapPath, query)
+	if err != nil {
+		fatal("search: %v", err)
+	}
+
+	if jsonOutput {
+		data, _ := json.Marshal(results)
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(results) == 0 {
+		fmt.Printf("No files matching \"%s\"\n", query)
+		return
+	}
+
+	fmt.Printf("🔍 \"%s\" — %d files found\n\n", query, len(results))
+
+	for _, r := range results {
+		fmt.Printf("  [#%d] %s\n", r.SnapshotID, r.Path)
+	}
+}
+
+func cmdGrep() {
+	_ = requireInit()
+
+	if len(os.Args) < 3 {
+		fatal("usage: snap grep <pattern> [--regex] [-i] [--json]")
+	}
+
+	root, _ := os.Getwd()
+	snapPath := filepath.Join(root, ".snap")
+
+	var patternParts []string
+	opts := search.GrepOptions{}
+	jsonOutput := false
+
+	for i := 2; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--regex":
+			opts.UseRegex = true
+		case "-i", "--ignore-case":
+			opts.CaseInsensitive = true
+		case "--json":
+			jsonOutput = true
+		default:
+			patternParts = append(patternParts, os.Args[i])
+		}
+	}
+
+	pattern := strings.Join(patternParts, " ")
+	if pattern == "" {
+		fatal("usage: snap grep <pattern> [--regex] [-i] [--json]")
+	}
+
+	results, err := search.GrepContent(snapPath, pattern, opts)
+	if err != nil {
+		fatal("grep: %v", err)
+	}
+
+	if jsonOutput {
+		data, _ := json.Marshal(results)
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(results) == 0 {
+		fmt.Printf("No matches for \"%s\"\n", pattern)
+		return
+	}
+
+	// Group by file
+	type fileGroup struct {
+		path    string
+		snapID  int
+		matches []search.ContentMatch
+	}
+
+	groups := make(map[string]*fileGroup)
+	var order []string
+
+	for _, r := range results {
+		if g, ok := groups[r.Path]; ok {
+			g.matches = append(g.matches, r)
+		} else {
+			groups[r.Path] = &fileGroup{
+				path:    r.Path,
+				snapID:  r.SnapshotID,
+				matches: []search.ContentMatch{r},
+			}
+			order = append(order, r.Path)
+		}
+	}
+
+	totalMatches := len(results)
+	fmt.Printf("🔍 \"%s\" — %d matches in %d files\n\n", pattern, totalMatches, len(groups))
+
+	for _, p := range order {
+		g := groups[p]
+		fmt.Printf("  \033[36m%s\033[0m [#%d] — %d matches\n", g.path, g.snapID, len(g.matches))
+		for _, m := range g.matches {
+			fmt.Printf("    \033[33mL%d:\033[0m %s\n", m.Line, strings.TrimSpace(m.Content))
+		}
+		fmt.Println()
+	}
 }
 
 func loadTimeline(snapPath string) *delta.Timeline {
