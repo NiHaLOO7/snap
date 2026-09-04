@@ -518,7 +518,7 @@ modeBtns.forEach(btn => {
         btn.classList.add('active');
         currentMode = btn.dataset.mode;
         input.placeholder = placeholders[currentMode];
-        groupBar.classList.toggle('hidden', currentMode === 'checkpoint');
+        groupBar.classList.toggle('hidden', currentMode !== 'file');
         doSearch();
     });
 });
@@ -586,7 +586,7 @@ function renderResults(data) {
     } else if (data.type === 'file') {
         grouped ? renderFileResults(data) : renderFileResultsFlat(data);
     } else {
-        grouped ? renderContentResults(data) : renderContentResultsFlat(data);
+        renderContentResults(data);
     }
 }
 
@@ -972,27 +972,33 @@ function renderContentResults(data) {
     }
 }
 
-/* ── File search flat (no grouping) — dedup by path, keep latest, show all checkpoint names ── */
+/* ── File search flat — dedup by (path + hash), group same-version checkpoints ── */
 function renderFileResultsFlat(data) {
-    // Collect all checkpoint IDs per path + keep latest entry
-    const pathSnapIds = new Map();
-    const pathLatest = new Map();
+    // Group by (path + hash) — each unique file version is one entry
+    const versionMap = new Map();
+    const versionOrder = [];
     for (const r of data.results) {
-        if (!pathSnapIds.has(r.path)) { pathSnapIds.set(r.path, []); }
-        pathSnapIds.get(r.path).push(r.snapshot_id);
-        if (!pathLatest.has(r.path) || r.snapshot_id > pathLatest.get(r.path).snapshot_id) {
-            pathLatest.set(r.path, r);
+        const key = r.path + '\0' + (r.hash || '');
+        if (!versionMap.has(key)) {
+            versionMap.set(key, { path: r.path, hash: r.hash || '', snapIds: [], latestSnapId: r.snapshot_id, score: r.score });
+            versionOrder.push(key);
         }
+        const entry = versionMap.get(key);
+        entry.snapIds.push(r.snapshot_id);
+        if (r.snapshot_id > entry.latestSnapId) { entry.latestSnapId = r.snapshot_id; }
+        if (r.score > entry.score) { entry.score = r.score; }
     }
-    const deduped = Array.from(pathLatest.values());
-    deduped.sort((a, b) => b.score - a.score);
 
-    summary.textContent = deduped.length + ' file' + (deduped.length !== 1 ? 's' : '') + ' found';
+    const versions = versionOrder.map(k => versionMap.get(k));
+    versions.sort((a, b) => b.score - a.score);
 
-    for (const r of deduped) {
-        const parts = splitPath(r.path);
-        const snapIds = pathSnapIds.get(r.path) || [];
-        const uniqueIds = [...new Set(snapIds)].sort((a, b) => b - a);
+    const totalVersions = versions.length;
+    const uniquePaths = new Set(versions.map(v => v.path)).size;
+    summary.textContent = uniquePaths + ' file' + (uniquePaths !== 1 ? 's' : '') + ', ' + totalVersions + ' version' + (totalVersions !== 1 ? 's' : '');
+
+    for (const v of versions) {
+        const parts = splitPath(v.path);
+        const uniqueIds = [...new Set(v.snapIds)].sort((a, b) => b - a);
         const cpTagsHtml = uniqueIds.map(id => {
             const meta = data.results.find(x => x.snapshot_id === id && x.checkpoint_meta);
             const msg = meta && meta.checkpoint_meta ? meta.checkpoint_meta.message : '';
@@ -1014,13 +1020,13 @@ function renderFileResultsFlat(data) {
             '</div>';
         row.addEventListener('click', (e) => {
             if (e.target.closest('.action-btn')) return;
-            vscode.postMessage({ type: 'openFile', filePath: r.path, snapshotId: r.snapshot_id });
+            vscode.postMessage({ type: 'openFile', filePath: v.path, snapshotId: v.latestSnapId });
         });
         row.querySelector('[data-action="diff"]').addEventListener('click', () => {
-            vscode.postMessage({ type: 'diffFile', filePath: r.path, snapshotId: r.snapshot_id });
+            vscode.postMessage({ type: 'diffFile', filePath: v.path, snapshotId: v.latestSnapId });
         });
         row.querySelector('[data-action="restore"]').addEventListener('click', () => {
-            vscode.postMessage({ type: 'restoreFile', filePath: r.path, snapshotId: r.snapshot_id });
+            vscode.postMessage({ type: 'restoreFile', filePath: v.path, snapshotId: v.latestSnapId });
         });
         results.appendChild(row);
     }

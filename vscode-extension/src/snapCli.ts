@@ -191,6 +191,7 @@ export interface FileSearchResult {
     snapshot_id: number;
     path: string;
     score: number;
+    hash: string;
 }
 
 export async function searchFiles(workspaceRoot: string, query: string, opts?: { caseSensitive?: boolean }): Promise<FileSearchResult[]> {
@@ -202,11 +203,11 @@ export async function searchFiles(workspaceRoot: string, query: string, opts?: {
     const results: FileSearchResult[] = [];
 
     for (const s of snapshots) {
-        for (const p of Object.keys(s.tree)) {
+        for (const [p, h] of Object.entries(s.tree)) {
             const target = cs ? p : p.toLowerCase();
             const score = substringScore(q, target);
             if (score > -100) {
-                results.push({ snapshot_id: s.id, path: p, score });
+                results.push({ snapshot_id: s.id, path: p, score, hash: h });
             }
         }
     }
