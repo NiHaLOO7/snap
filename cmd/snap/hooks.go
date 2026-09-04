@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const hookCommand = `if [ -d .snap ]; then FILE=$(echo "$TOOL_INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('file_path',''))" 2>/dev/null); if [ -n "$FILE" ] && [ -f "$FILE" ]; then snap save-file "$FILE" -m "before agent edit" 2>/dev/null; fi; fi`
+const hookCommand = `if [ -d .snap ]; then FILE=$(echo "$TOOL_INPUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('file_path',''))" 2>/dev/null); if [ -n "$FILE" ] && [ -f "$FILE" ]; then FNAME=$(basename "$FILE"); snap save-file "$FILE" -m "before: agent edits $FNAME" -d "auto-checkpoint before AI agent writes to $FILE" 2>/dev/null; fi; fi`
 
 func setupClaudeHook() {
 	defer func() {

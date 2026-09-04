@@ -133,6 +133,17 @@ Don't write meaningless messages like "checkpoint" or "saving" — they add nois
 - Automatic GC runs hourly when recording is active
 - Suggest cleanup after long sessions with 20+ checkpoints.
 
+## Search — find files and code across all checkpoints:
+- snap search <query> — search file names across all checkpoints (substring match)
+- snap search <query> --json — output as JSON
+- snap grep <pattern> — search file contents across all checkpoints
+- snap grep <pattern> -i — case-insensitive content search
+- snap grep <pattern> --regex — regex pattern search
+- snap grep <pattern> --json — output as JSON
+- Use search to find a file that was deleted or renamed — it searches ALL checkpoints, not just the latest.
+- Use grep to find code that was removed — if a function existed in checkpoint #2 but was deleted in #5, grep will find it in #2.
+- These are powerful for recovering lost code, finding when something changed, or locating files across the project history.
+
 ## All commands reference:
 - snap save "msg" — full project checkpoint (use for 3+ files)
 - snap save "msg" -d "description" — checkpoint with extra context
@@ -154,6 +165,8 @@ Don't write meaningless messages like "checkpoint" or "saving" — they add nois
 - snap timeline — view recorded changes with timestamps
 - snap rewind "<time>" — jump back in time
 - snap watch add/remove/list — critical file auto-checkpoints
+- snap search <query> — find files by name across all checkpoints
+- snap grep <pattern> [-i] [--regex] — find content across all checkpoints
 - snap export <id> [-o file] [-p password] — export as .snap file
 - snap import <file> [-p password] — import a .snap file
 - snap clean [--dry-run] [--auto] — garbage collection
@@ -172,6 +185,8 @@ Don't write meaningless messages like "checkpoint" or "saving" — they add nois
 | Something broke | snap restore <id> or snap restore-file <id> <file> |
 | Need to compare states | snap diff <id1> <id2> |
 | Want to see what changed | snap status |
+| Looking for a deleted/renamed file | snap search <filename> |
+| Looking for removed code | snap grep "function_name" |
 | Critical config file exists | snap watch add <file> |
 | Sharing state with someone | snap export <id> |
 | Long session, lots of checkpoints | snap clean --auto |

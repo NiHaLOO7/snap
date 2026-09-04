@@ -1,10 +1,32 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { SnapProvider, SnapDecorationProvider, SnapshotItem, FileItem } from './snapProvider';
 import { ChangesProvider } from './changesProvider';
 import { RecordingTimelineProvider, TimelineChangeItem } from './recordingProvider';
 import { WatchProvider } from './watchProvider';
-import { execSnap, isRecording, clearTimeline } from './snapCli';
+import { SearchViewProvider } from './searchViewProvider';
+import { execSnap, isRecording, clearTimeline, searchFiles, grepContent } from './snapCli';
+
+function computeFileStatus(workspaceRoot: string, filePath: string, snapshotHash: string): 'same' | 'modified' | 'deleted' {
+    const fullPath = path.join(workspaceRoot, filePath);
+    try {
+        if (!fs.existsSync(fullPath)) { return 'deleted'; }
+        const data = fs.readFileSync(fullPath);
+        const currentHash = crypto.createHash('sha256').update(data).digest('hex');
+        return currentHash !== snapshotHash ? 'modified' : 'same';
+    } catch { return 'deleted'; }
+}
+
+function computeFileStatuses(workspaceRoot: string, tree: Record<string, string>): Record<string, string> {
+    const statuses: Record<string, string> = {};
+    for (const [filePath, hash] of Object.entries(tree)) {
+        const s = computeFileStatus(workspaceRoot, filePath, hash);
+        if (s !== 'same') { statuses[filePath] = s; }
+    }
+    return statuses;
+}
 
 class SnapContentProvider implements vscode.TextDocumentContentProvider {
     private contentMap = new Map<string, string>();
@@ -75,6 +97,142 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('snapChanges', changesProvider);
     vscode.window.registerTreeDataProvider('snapRecordingTimeline', recordingProvider);
     vscode.window.registerTreeDataProvider('snapWatchedFiles', watchProvider);
+
+    const searchViewProvider = new SearchViewProvider(context.extensionUri, {
+        onSearch: async (query, opts) => {
+            searchViewProvider.setLoading(true);
+
+            const { getSnapshots } = await import('./snapCli');
+            const allSnapshots = await getSnapshots(workspaceRoot);
+            const snapMetaMap = new Map<number, { message: string; description: string; time: string; fileCount: number; pinned: boolean }>();
+            for (const s of allSnapshots) {
+                snapMetaMap.set(s.id, {
+                    message: s.message,
+                    description: s.description,
+                    time: new Date(s.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                    fileCount: s.fileCount,
+                    pinned: s.pinned,
+                });
+            }
+
+            if (opts.mode === 'checkpoint') {
+                const matchStr = opts.caseSensitive
+                    ? (haystack: string) => haystack.includes(query)
+                    : (haystack: string) => haystack.toLowerCase().includes(query.toLowerCase());
+                const matched = allSnapshots.filter(s =>
+                    matchStr(s.message) ||
+                    matchStr(s.description) ||
+                    s.id.toString() === query
+                ).map(s => ({
+                    id: s.id,
+                    message: s.message,
+                    description: s.description,
+                    time: snapMetaMap.get(s.id)!.time,
+                    fileCount: s.fileCount,
+                    pinned: s.pinned,
+                    autoSave: s.autoSave,
+                    files: s.files,
+                    tree: s.tree,
+                    fileStatuses: computeFileStatuses(workspaceRoot, s.tree),
+                    isLatest: s.id === allSnapshots[allSnapshots.length - 1]?.id,
+                }));
+                searchViewProvider.setResults({ type: 'checkpoint', query, results: matched });
+            } else if (opts.mode === 'file') {
+                const results = await searchFiles(workspaceRoot, query, { caseSensitive: opts.caseSensitive });
+                const enriched = results.map(r => ({
+                    ...r,
+                    checkpoint_meta: snapMetaMap.get(r.snapshot_id) || null,
+                }));
+                searchViewProvider.setResults({ type: 'file', query, results: enriched });
+            } else {
+                const results = await grepContent(workspaceRoot, query, {
+                    caseSensitive: opts.caseSensitive,
+                    regex: opts.regex,
+                });
+                const enriched = results.map(r => ({
+                    ...r,
+                    checkpoint_meta: snapMetaMap.get(r.snapshot_id) || null,
+                }));
+                searchViewProvider.setResults({ type: 'content', query, results: enriched });
+            }
+        },
+        onOpenFile: async (filePath, snapshotId, line?) => {
+            const currentFilePath = path.join(workspaceRoot, filePath);
+            const fs = await import('fs');
+
+            if (line && fs.existsSync(currentFilePath)) {
+                const uri = vscode.Uri.file(currentFilePath);
+                const doc = await vscode.workspace.openTextDocument(uri);
+                const editor = await vscode.window.showTextDocument(doc, { preview: true });
+                const lineIdx = Math.max(0, line - 1);
+                const range = new vscode.Range(lineIdx, 0, lineIdx, 0);
+                editor.selection = new vscode.Selection(range.start, range.start);
+                editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+            } else {
+                const result = await execSnap(workspaceRoot, ['show', snapshotId.toString(), filePath]);
+                if (!result.success) {
+                    vscode.window.showErrorMessage(`Failed: ${result.error}`);
+                    return;
+                }
+                let content = result.output;
+                const headerEnd = content.indexOf('\n\n');
+                if (headerEnd !== -1) { content = content.substring(headerEnd + 2); }
+                const uri = vscode.Uri.parse(`snap://search/${snapshotId}/${filePath}?ts=${Date.now()}`);
+                contentProvider.setContent(uri.toString(), content);
+                const doc = await vscode.workspace.openTextDocument(uri);
+                const editor = await vscode.window.showTextDocument(doc, { preview: true });
+                await vscode.commands.executeCommand('workbench.action.files.setActiveEditorReadonlyInSession');
+                if (line) {
+                    const lineIdx = Math.max(0, line - 1);
+                    const range = new vscode.Range(lineIdx, 0, lineIdx, 0);
+                    editor.selection = new vscode.Selection(range.start, range.start);
+                    editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                }
+            }
+        },
+        onDiffFile: async (filePath, snapshotId) => {
+            const result = await execSnap(workspaceRoot, ['show', snapshotId.toString(), filePath]);
+            if (!result.success) {
+                vscode.window.showErrorMessage(`Failed: ${result.error}`);
+                return;
+            }
+            let snapshotContent = result.output;
+            const headerEnd = snapshotContent.indexOf('\n\n');
+            if (headerEnd !== -1) { snapshotContent = snapshotContent.substring(headerEnd + 2); }
+            const snapshotUri = vscode.Uri.parse(`snap://search-diff/${snapshotId}/${filePath}?ts=${Date.now()}`);
+            contentProvider.setContent(snapshotUri.toString(), snapshotContent);
+            const currentUri = vscode.Uri.file(path.join(workspaceRoot, filePath));
+            await vscode.commands.executeCommand('vscode.diff', snapshotUri, currentUri,
+                `#${snapshotId} ↔ Current: ${path.basename(filePath)}`, { renderSideBySide: true });
+        },
+        onOpenCheckpoint: async (snapshotId) => {
+            const result = await execSnap(workspaceRoot, ['show', snapshotId.toString()]);
+            if (result.success) {
+                const outputChannel = vscode.window.createOutputChannel(`Snap #${snapshotId}`);
+                outputChannel.append(result.output);
+                outputChannel.show();
+            }
+        },
+        onRestoreFile: async (filePath, snapshotId) => {
+            const confirm = await vscode.window.showWarningMessage(
+                `Restore ${path.basename(filePath)} from checkpoint #${snapshotId}?`,
+                { modal: true },
+                'Restore'
+            );
+            if (confirm !== 'Restore') { return; }
+            const result = await execSnap(workspaceRoot, ['restore-file', snapshotId.toString(), filePath]);
+            if (result.success) {
+                vscode.window.showInformationMessage(`Restored ${path.basename(filePath)} from #${snapshotId}`);
+                snapProvider.refresh();
+                changesProvider.refresh();
+            } else {
+                vscode.window.showErrorMessage(`Restore failed: ${result.error}`);
+            }
+        },
+    });
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(SearchViewProvider.viewType, searchViewProvider)
+    );
 
     treeView.onDidChangeVisibility(e => {
         if (e.visible) {
